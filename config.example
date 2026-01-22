@@ -1,0 +1,15 @@
+# Seer Thread Manager Configuration
+# Copy this file to 'config' and customize for your setup
+
+# Main seer repository path (absolute path required)
+SEER_REPO_PATH="/Users/pika/Projects/seer"
+
+# Optional: Multiple repos (uncomment and add paths as needed)
+# SEER_REPO_PATH_2="/path/to/another/seer/clone"
+
+# Optional: Custom port range (default 10000-11000)
+# Thread ports are allocated as: BASE + (thread_id * 100)
+# THREAD_PORT_BASE=10000
+
+# Optional: Max threads (default 10, range 1-10)
+# MAX_THREADS=10

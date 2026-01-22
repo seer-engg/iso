@@ -1,0 +1,102 @@
+services:
+  postgres:
+    container_name: seer-thread-{{THREAD_ID}}-postgres
+    image: postgres:16-alpine
+    ports:
+      - "{{PG_PORT}}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-seer}
+    volumes:
+      - seer-thread-{{THREAD_ID}}-postgres_data:/var/lib/postgresql/data
+      - {{THREAD_DIR}}/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-seer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+
+  redis:
+    container_name: seer-thread-{{THREAD_ID}}-redis
+    image: redis:7-alpine
+    ports:
+      - "{{REDIS_PORT}}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+
+  api:
+    container_name: seer-thread-{{THREAD_ID}}-api
+    build:
+      context: {{THREAD_DIR}}
+      dockerfile: Dockerfile
+    ports:
+      - "{{API_PORT}}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - {{THREAD_DIR}}/.env.thread
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      REDIS_URL: "redis://redis:6379/0"
+      UV_LINK_MODE: "copy"
+      AUTO_APPLY_DATABASE_MIGRATIONS: "True"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      - {{THREAD_DIR}}:/app
+      - /app/.venv
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        sleep 2 &&
+        uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+
+  worker:
+    container_name: seer-thread-{{THREAD_ID}}-worker
+    build:
+      context: {{THREAD_DIR}}
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - {{THREAD_DIR}}/.env.thread
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      REDIS_URL: "redis://redis:6379/0"
+      UV_LINK_MODE: "copy"
+    volumes:
+      - {{THREAD_DIR}}:/app
+      - /app/.venv
+    command: >
+      sh -c "
+        echo 'Waiting for dependencies to be ready...' &&
+        sleep 2 &&
+        uv run taskiq worker seer.worker.broker:broker
+      "
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+
+volumes:
+  seer-thread-{{THREAD_ID}}-postgres_data:
+
+networks:
+  seer-thread-{{THREAD_ID}}-network:
+    driver: bridge
