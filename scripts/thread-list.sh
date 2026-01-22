@@ -31,7 +31,7 @@ if [[ ! -f "$REGISTRY_FILE" ]] || [[ ! -s "$REGISTRY_FILE" ]]; then
     echo "No active threads found."
     echo ""
     echo "To create a thread:"
-    echo "  thread-init.sh <feature-name> [base-branch]"
+    echo "  iso init <feature-name> [base-branch]"
     exit 0
 fi
 
@@ -94,6 +94,6 @@ done < "$REGISTRY_FILE"
 
 echo ""
 echo "Commands:"
-echo "  thread-init.sh <feature> [base]    Create new thread"
-echo "  thread-cleanup.sh <id>             Cleanup thread resources"
+echo "  iso init <feature> [base]    Create new thread"
+echo "  iso cleanup <id>             Cleanup thread resources"
 echo ""

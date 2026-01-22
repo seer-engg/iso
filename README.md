@@ -1,6 +1,6 @@
-# Seer Thread Manager
+# iso - Isolated Thread Manager
 
-Git worktree-based parallel development environment for running multiple isolated Claude Code threads simultaneously.
+Git worktree-based parallel development for running multiple isolated Claude Code threads simultaneously.
 
 ## Problem
 
@@ -12,18 +12,10 @@ Running multiple Claude Code threads on the same repository causes conflicts:
 
 ## Solution
 
-This tool creates isolated development environments for each thread using:
-- **Git worktrees** - Separate working directories sharing the same .git
-- **Unique Docker environments** - Isolated containers, volumes, ports per thread
-- **Thread registry** - Track all active threads and resources
-
-## Features
-
-- Up to 10 parallel threads with auto-allocated ports (10100-11000 range)
-- Each thread gets: isolated worktree, Postgres, Redis, API server
-- Independent testing and Docker builds
-- Simple cleanup with resource tracking
-- Works with existing PR workflow
+Each thread gets isolated:
+- **Git worktree** - Separate working directory
+- **Docker environment** - Unique Postgres, Redis, API ports
+- **Thread registry** - Track all active threads
 
 ## Quick Start
 
@@ -35,8 +27,8 @@ cp config.example config
 nano config
 # Set: SEER_REPO_PATH=/Users/pika/Projects/seer
 
-# 2. Add to PATH (optional but recommended)
-echo 'export PATH="/Users/pika/Projects/seer-threads/scripts:$PATH"' >> ~/.zshrc
+# 2. Add to PATH
+echo 'export PATH="/Users/pika/Projects/iso:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
@@ -44,78 +36,78 @@ source ~/.zshrc
 
 ```bash
 # Start new thread
-thread-init.sh "add-auth-feature" dev
+iso init "add-auth-feature" dev
 cd /Users/pika/Projects/seer/.worktrees/thread-1
 # Open Claude Code here
 
 # Check active threads
-thread-list.sh
+iso list
 
 # When done, create PR
 git push origin thread-1-add-auth-feature
 gh pr create --base dev
 
 # Cleanup resources
-thread-cleanup.sh 1
+iso cleanup 1
 ```
 
 ## Commands
 
-### thread-init.sh
+### iso init
 
-Initialize a new thread with isolated environment.
+Initialize a new isolated thread.
 
 ```bash
-thread-init.sh <feature-name> [base-branch]
+iso init <feature-name> [base-branch]
 
 # Examples:
-thread-init.sh "fix-workflow-bug" dev
-thread-init.sh "refactor-api" main
+iso init "add-authentication" dev
+iso init "fix-workflow-bug" main
 ```
 
 **What it does:**
 1. Allocates thread ID and ports
-2. Creates git worktree at `.worktrees/thread-N/`
+2. Creates git worktree with new branch
 3. Generates thread-specific docker-compose.yml
 4. Creates .env.thread with unique DATABASE_URL, REDIS_URL
 5. Starts Docker containers (postgres, redis, worker)
 6. Runs database migrations
-7. Outputs connection details
+7. Shows connection details
 
-### thread-list.sh
+### iso list
 
-Display all active threads with status.
+Display all active threads.
 
 ```bash
-thread-list.sh
+iso list
 
 # Output:
-# THREAD  BRANCH                 STATUS   PORTS(PG/RD/API)      CONTAINERS    WORKTREE
-# 1       thread-1-add-auth      active   10100/10101/10102    3 running     .worktrees/thread-1
-# 2       thread-2-fix-bug       active   10200/10201/10202    3 running     .worktrees/thread-2
+# THREAD  BRANCH                 STATUS   PORTS(PG/RD/API)      CONTAINERS
+# 1       thread-1-add-auth      active   10100/10101/10102    3 running
+# 2       thread-2-fix-bug       active   10200/10201/10202    3 running
 ```
 
-### thread-cleanup.sh
+**Aliases:** `iso ls`
 
-Clean up thread resources (containers, volumes, worktree).
+### iso cleanup
+
+Clean up thread resources.
 
 ```bash
-thread-cleanup.sh <thread-id>
+iso cleanup <thread-id>
 
 # Example:
-thread-cleanup.sh 1
-
-# What it does:
-# 1. Stops Docker containers
-# 2. Removes Docker volumes
-# 3. Removes worktree directory
-# 4. Updates thread registry
-# 5. Preserves git branch for PR history
+iso cleanup 1
 ```
 
-### port-allocator.sh
+**What it does:**
+1. Stops Docker containers
+2. Removes volumes
+3. Removes worktree
+4. Updates registry
+5. Preserves branch for PR history
 
-Internal script for port allocation (used by thread-init.sh).
+**Aliases:** `iso clean`, `iso rm`
 
 ## Port Allocation
 
@@ -133,14 +125,15 @@ Main repo continues using default ports (5432, 6379, 8000).
 /Users/pika/Projects/
 ├── seer/                           # Main repo (unchanged)
 │   ├── src/, tests/, etc.          # Source code
-│   └── .worktrees/                 # Created by scripts (gitignored)
+│   └── .worktrees/                 # Created by iso (gitignored)
 │       ├── thread-1/               # Isolated worktree for thread 1
 │       │   ├── docker-compose.thread.yml
 │       │   ├── .env.thread
 │       │   └── [full repo files]
 │       ├── thread-2/
 │       └── .thread-registry        # Active threads tracking
-└── seer-threads/                   # This repo
+└── iso/                            # This repo
+    ├── iso                         # Main CLI (add to PATH)
     ├── scripts/
     │   ├── thread-init.sh
     │   ├── thread-cleanup.sh
@@ -159,7 +152,7 @@ Main repo continues using default ports (5432, 6379, 8000).
 cd /Users/pika/Projects/seer/.worktrees/thread-1
 
 # View logs
-docker-compose -f docker-compose.thread.yml logs -f api
+docker compose -f docker-compose.thread.yml logs -f api
 
 # Run tests
 uv run pytest -m unit           # SQLite (fast)
@@ -197,8 +190,8 @@ Each thread is completely isolated:
 lsof -i :10100
 
 # Force cleanup and retry
-thread-cleanup.sh 1
-thread-init.sh "feature-name" dev
+iso cleanup 1
+iso init "feature-name" dev
 ```
 
 ### Docker issues
@@ -206,23 +199,24 @@ thread-init.sh "feature-name" dev
 ```bash
 # View thread logs
 cd .worktrees/thread-1
-docker-compose -f docker-compose.thread.yml logs
+docker compose -f docker-compose.thread.yml logs
 
 # Rebuild containers
-docker-compose -f docker-compose.thread.yml up -d --build
+docker compose -f docker-compose.thread.yml up -d --build
 
 # Full reset
-docker-compose -f docker-compose.thread.yml down -v
-docker-compose -f docker-compose.thread.yml up -d
+docker compose -f docker-compose.thread.yml down -v
+docker compose -f docker-compose.thread.yml up -d
 ```
 
 ### Worktree corrupted
 
 ```bash
 # Remove and recreate
+cd /Users/pika/Projects/seer
 git worktree remove --force .worktrees/thread-1
 git worktree prune
-thread-init.sh "feature-name" dev
+iso init "feature-name" dev
 ```
 
 ### Check thread registry
@@ -236,7 +230,7 @@ cat /Users/pika/Projects/seer/.worktrees/.thread-registry
 
 ## Resource Requirements
 
-For 5 threads (recommended max for typical dev machines):
+For 5 threads (recommended max):
 - **Disk**: ~1.25GB (250MB per thread)
 - **Memory**: ~2.5GB (500MB per thread)
 - **CPU**: ~1 core per thread during builds/tests
@@ -260,7 +254,7 @@ No changes needed to CI configuration.
 
 ```bash
 # Branch from main instead of dev
-thread-init.sh "hotfix-auth" main
+iso init "hotfix-auth" main
 ```
 
 ### Multiple seer repos
@@ -271,7 +265,7 @@ SEER_REPO_PATH="/Users/pika/Projects/seer"
 SEER_REPO_PATH_2="/Users/pika/Projects/seer-fork"
 
 # Use with environment variable:
-SEER_REPO_PATH="/Users/pika/Projects/seer-fork" thread-init.sh "test" dev
+SEER_REPO_PATH="/Users/pika/Projects/seer-fork" iso init "test" dev
 ```
 
 ### Check thread health
@@ -296,7 +290,7 @@ A: No. The main repo at `/Users/pika/Projects/seer` remains untouched. Only `.wo
 A: Yes. Main repo's docker-compose.yml uses different ports (5432, 6379, 8000).
 
 **Q: What happens if I forget to cleanup threads?**
-A: No problem. Use `thread-list.sh` to see all active threads, cleanup anytime with `thread-cleanup.sh N`.
+A: No problem. Use `iso list` to see all active threads, cleanup anytime with `iso cleanup N`.
 
 **Q: Do threads share git objects?**
 A: Yes. Worktrees share the same `.git` directory, so they're space-efficient (only ~50MB per worktree).

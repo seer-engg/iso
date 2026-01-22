@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# iso - Isolated thread manager for parallel development
+# Short for "isolation" - manages parallel git worktrees with isolated Docker environments
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+show_usage() {
+    cat <<EOF
+iso - Isolated thread manager for parallel development
+
+Usage:
+  iso init <feature-name> [base-branch]    Initialize a new isolated thread
+  iso list                                 List all active threads
+  iso cleanup <thread-id>                  Cleanup thread resources
+  iso help                                 Show this help message
+
+Examples:
+  iso init "add-auth-feature" dev          Create thread from dev branch
+  iso init "fix-bug" main                  Create thread from main branch
+  iso list                                 Show all active threads
+  iso cleanup 1                            Cleanup thread 1
+
+Commands:
+  init      Create new isolated thread with git worktree + Docker environment
+  list      Display all active threads with status and ports
+  cleanup   Remove thread containers, volumes, and worktree
+  help      Show this help message
+
+Learn more:
+  cat $SCRIPT_DIR/README.md
+
+EOF
+}
+
+# Check for command
+if [[ $# -eq 0 ]]; then
+    show_usage
+    exit 0
+fi
+
+COMMAND="$1"
+shift
+
+# Dispatch to appropriate script
+case "$COMMAND" in
+    init)
+        exec "$SCRIPT_DIR/scripts/thread-init.sh" "$@"
+        ;;
+    list|ls)
+        exec "$SCRIPT_DIR/scripts/thread-list.sh" "$@"
+        ;;
+    cleanup|clean|rm)
+        exec "$SCRIPT_DIR/scripts/thread-cleanup.sh" "$@"
+        ;;
+    help|--help|-h)
+        show_usage
+        exit 0
+        ;;
+    *)
+        echo "Error: Unknown command: $COMMAND" >&2
+        echo "" >&2
+        show_usage
+        exit 1
+        ;;
+esac
