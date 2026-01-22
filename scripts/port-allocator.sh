@@ -49,71 +49,91 @@ check_port_available() {
     return 0
 }
 
-# Atomic registry operations using flock
+# Acquire lock (portable across Linux and macOS)
+acquire_lock() {
+    local max_wait=30
+    local wait_count=0
+    while ! mkdir "$LOCKFILE" 2>/dev/null; do
+        sleep 0.1
+        ((wait_count++)) || true
+        if [[ $wait_count -ge $((max_wait * 10)) ]]; then
+            echo "Error: Failed to acquire lock after ${max_wait}s" >&2
+            return 1
+        fi
+    done
+    trap "rmdir '$LOCKFILE' 2>/dev/null || true" EXIT
+}
+
+# Release lock
+release_lock() {
+    rmdir "$LOCKFILE" 2>/dev/null || true
+}
+
+# Atomic registry operations
 allocate_thread() {
     local feature_name=$1
     local branch_name=$2
 
-    (
-        # Acquire exclusive lock
-        flock -x 200
+    acquire_lock || return 1
 
-        # Read existing threads
-        local used_ids=()
-        while IFS='|' read -r thread_id rest; do
-            if [[ -n "$thread_id" && "$thread_id" =~ ^[0-9]+$ ]]; then
-                used_ids+=("$thread_id")
-            fi
-        done < "$REGISTRY_FILE"
+    # Read existing threads
+    local used_ids=()
+    while IFS='|' read -r thread_id rest; do
+        if [[ -n "$thread_id" && "$thread_id" =~ ^[0-9]+$ ]]; then
+            used_ids+=("$thread_id")
+        fi
+    done < "$REGISTRY_FILE"
 
-        # Find next available ID
-        local next_id=0
-        for ((i=1; i<=MAX_THREADS; i++)); do
-            local found=0
-            for used in "${used_ids[@]:-}"; do
-                if [[ "$used" == "$i" ]]; then
-                    found=1
-                    break
-                fi
-            done
-            if [[ $found -eq 0 ]]; then
-                next_id=$i
+    # Find next available ID
+    local next_id=0
+    for ((i=1; i<=MAX_THREADS; i++)); do
+        local found=0
+        for used in "${used_ids[@]:-}"; do
+            if [[ "$used" == "$i" ]]; then
+                found=1
                 break
             fi
         done
+        if [[ $found -eq 0 ]]; then
+            next_id=$i
+            break
+        fi
+    done
 
-        if [[ $next_id -eq 0 ]]; then
-            echo "Error: No available thread slots (max $MAX_THREADS)" >&2
+    if [[ $next_id -eq 0 ]]; then
+        echo "Error: No available thread slots (max $MAX_THREADS)" >&2
+        release_lock
+        return 1
+    fi
+
+    # Calculate ports
+    local base_port=$((THREAD_PORT_BASE + (next_id * 100)))
+    local pg_port=$base_port
+    local redis_port=$((base_port + 1))
+    local api_port=$((base_port + 2))
+    local worker_port=$((base_port + 3))
+
+    # Verify all ports are available
+    local ports=($pg_port $redis_port $api_port $worker_port)
+    for port in "${ports[@]}"; do
+        if ! check_port_available "$port"; then
+            echo "Error: Port $port already in use" >&2
+            release_lock
             return 1
         fi
+    done
 
-        # Calculate ports
-        local base_port=$((THREAD_PORT_BASE + (next_id * 100)))
-        local pg_port=$base_port
-        local redis_port=$((base_port + 1))
-        local api_port=$((base_port + 2))
-        local worker_port=$((base_port + 3))
+    # Calculate worktree path
+    local worktree_path="$WORKTREE_DIR/thread-$next_id"
 
-        # Verify all ports are available
-        local ports=($pg_port $redis_port $api_port $worker_port)
-        for port in "${ports[@]}"; do
-            if ! check_port_available "$port"; then
-                echo "Error: Port $port already in use" >&2
-                return 1
-            fi
-        done
+    # Add to registry
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "$next_id|$branch_name|$pg_port|$redis_port|$api_port|$worker_port|$worktree_path|$timestamp|initializing" >> "$REGISTRY_FILE"
 
-        # Calculate worktree path
-        local worktree_path="$WORKTREE_DIR/thread-$next_id"
+    # Output result (for parent script to capture)
+    echo "$next_id|$pg_port|$redis_port|$api_port|$worker_port|$worktree_path"
 
-        # Add to registry
-        local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        echo "$next_id|$branch_name|$pg_port|$redis_port|$api_port|$worker_port|$worktree_path|$timestamp|initializing" >> "$REGISTRY_FILE"
-
-        # Output result (for parent script to capture)
-        echo "$next_id|$pg_port|$redis_port|$api_port|$worker_port|$worktree_path"
-
-    ) 200>"$LOCKFILE"
+    release_lock
 }
 
 # Update thread status
@@ -121,46 +141,44 @@ update_thread_status() {
     local thread_id=$1
     local new_status=$2
 
-    (
-        flock -x 200
+    acquire_lock || return 1
 
-        # Create temp file
-        local temp_file="$REGISTRY_FILE.tmp"
+    # Create temp file
+    local temp_file="$REGISTRY_FILE.tmp"
 
-        # Update status
-        while IFS='|' read -r tid branch pg_port redis_port api_port worker_port wt_path created status; do
-            if [[ "$tid" == "$thread_id" ]]; then
-                echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$new_status"
-            else
-                echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$status"
-            fi
-        done < "$REGISTRY_FILE" > "$temp_file"
+    # Update status
+    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port wt_path created status; do
+        if [[ "$tid" == "$thread_id" ]]; then
+            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$new_status"
+        else
+            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$status"
+        fi
+    done < "$REGISTRY_FILE" > "$temp_file"
 
-        mv "$temp_file" "$REGISTRY_FILE"
+    mv "$temp_file" "$REGISTRY_FILE"
 
-    ) 200>"$LOCKFILE"
+    release_lock
 }
 
 # Remove thread from registry
 remove_thread() {
     local thread_id=$1
 
-    (
-        flock -x 200
+    acquire_lock || return 1
 
-        # Create temp file
-        local temp_file="$REGISTRY_FILE.tmp"
+    # Create temp file
+    local temp_file="$REGISTRY_FILE.tmp"
 
-        # Remove thread
-        while IFS='|' read -r tid rest; do
-            if [[ "$tid" != "$thread_id" ]]; then
-                echo "$tid|$rest"
-            fi
-        done < "$REGISTRY_FILE" > "$temp_file"
+    # Remove thread
+    while IFS='|' read -r tid rest; do
+        if [[ "$tid" != "$thread_id" ]]; then
+            echo "$tid|$rest"
+        fi
+    done < "$REGISTRY_FILE" > "$temp_file"
 
-        mv "$temp_file" "$REGISTRY_FILE"
+    mv "$temp_file" "$REGISTRY_FILE"
 
-    ) 200>"$LOCKFILE"
+    release_lock
 }
 
 # Get thread info
