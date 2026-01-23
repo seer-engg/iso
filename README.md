@@ -219,7 +219,21 @@ Each thread is completely isolated:
 
 ## MCP Integration
 
-ISO can be used from Claude Desktop, Cursor, and other MCP-compatible AI tools.
+ISO can be used from Claude Code CLI, Claude Desktop, Cursor, and other MCP-compatible AI tools.
+
+**Quick start for Claude Code CLI:**
+Add to `.mcp.json` in your project:
+```json
+{
+  "mcpServers": {
+    "iso": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/iso/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
 
 ### Installation
 

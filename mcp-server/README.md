@@ -57,6 +57,49 @@ Or if installed globally:
 }
 ```
 
+### Claude Code CLI
+
+Add to `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "iso": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/iso/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+**Using with existing MCPs:**
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "shadcn": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
+    },
+    "iso": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/Users/pika/Projects/iso/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+**Verification:**
+1. Restart Claude Code or start a new session
+2. The ISO MCP tools should appear in the available tools
+3. Test with: "List all ISO threads"
+
 ### Cursor
 
 Add to Cursor settings (MCP section):

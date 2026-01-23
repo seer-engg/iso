@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "iso": {
+      "type": "stdio",
+      "comment": "ISO thread manager - update path to match your installation",
+      "command": "node",
+      "args": ["/Users/pika/Projects/iso/mcp-server/dist/index.js"]
+    }
+  }
+}

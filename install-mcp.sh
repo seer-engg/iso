@@ -35,3 +35,15 @@ echo "Claude Desktop config location:"
 echo "  macOS: ~/Library/Application Support/Claude/claude_desktop_config.json"
 echo "  Linux: ~/.config/Claude/claude_desktop_config.json"
 echo ""
+echo "For Claude Code CLI, add to your project's .mcp.json:"
+echo ""
+echo '{
+  "mcpServers": {
+    "iso": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["'$SCRIPT_DIR'/mcp-server/dist/index.js"]
+    }
+  }
+}'
+echo ""
