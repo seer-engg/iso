@@ -122,6 +122,16 @@ fi
 
 echo ""
 
+# Restore frontend .env if it was modified
+if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
+    if [[ -f "$SEER_FRONTEND_PATH/.env.original" ]]; then
+        echo "Restoring frontend configuration..."
+        mv "$SEER_FRONTEND_PATH/.env.original" "$SEER_FRONTEND_PATH/.env"
+        echo "✓ Frontend .env restored to original"
+        echo ""
+    fi
+fi
+
 # Remove worktree
 if [[ -d "$wt_path" ]]; then
     echo "Removing worktree..."

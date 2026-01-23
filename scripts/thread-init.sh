@@ -133,6 +133,27 @@ fi
 echo "✓ .env.thread created"
 echo ""
 
+# Update frontend .env if frontend path configured
+if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
+    echo "Updating frontend configuration..."
+
+    # Backup original frontend .env if not already backed up
+    if [[ -f "$SEER_FRONTEND_PATH/.env" ]] && [[ ! -f "$SEER_FRONTEND_PATH/.env.original" ]]; then
+        cp "$SEER_FRONTEND_PATH/.env" "$SEER_FRONTEND_PATH/.env.original"
+        echo "✓ Original frontend .env backed up"
+    fi
+
+    # Read existing .env and update VITE_BACKEND_API_URL
+    if [[ -f "$SEER_FRONTEND_PATH/.env" ]]; then
+        sed -i.bak "s|^VITE_BACKEND_API_URL=.*|VITE_BACKEND_API_URL=http://localhost:$API_PORT|" "$SEER_FRONTEND_PATH/.env"
+        rm "$SEER_FRONTEND_PATH/.env.bak"
+        echo "✓ Frontend .env updated to use port $API_PORT"
+    else
+        echo "Warning: Frontend .env not found at $SEER_FRONTEND_PATH/.env" >&2
+    fi
+    echo ""
+fi
+
 # Start Docker containers
 echo "Starting Docker containers..."
 cd "$THREAD_DIR"
@@ -209,6 +230,16 @@ echo "Services:"
 echo "  API:      http://localhost:$API_PORT"
 echo "  Postgres: postgresql://postgres:postgres@localhost:$PG_PORT/seer"
 echo "  Redis:    redis://localhost:$REDIS_PORT/0"
+echo ""
+echo "Frontend Configuration:"
+if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
+    echo "  Backend URL: http://localhost:$API_PORT"
+    echo "  Frontend .env: Updated automatically"
+else
+    echo "  ⚠️  Frontend not configured in ISO config"
+    echo "  Manually update frontend .env:"
+    echo "      VITE_BACKEND_API_URL=http://localhost:$API_PORT"
+fi
 echo ""
 echo "Next steps:"
 echo "  cd $THREAD_DIR"

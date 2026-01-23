@@ -4,6 +4,9 @@
 # Main seer repository path (absolute path required)
 SEER_REPO_PATH="/Users/pika/Projects/seer"
 
+# Optional: Frontend repository path (for automatic .env updates)
+# SEER_FRONTEND_PATH="/Users/pika/Projects/seer-frontend"
+
 # Optional: Multiple repos (uncomment and add paths as needed)
 # SEER_REPO_PATH_2="/path/to/another/seer/clone"
 

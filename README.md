@@ -27,7 +27,11 @@ cp config.example config
 nano config
 # Set: SEER_REPO_PATH=/Users/pika/Projects/seer
 
-# 2. Add to PATH
+# 2. (Optional) Configure frontend integration
+# Add to config: SEER_FRONTEND_PATH=/Users/pika/Projects/seer-frontend
+# This auto-updates frontend .env to use thread-specific ports
+
+# 3. Add to PATH
 echo 'export PATH="/Users/pika/Projects/iso:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
@@ -166,6 +170,25 @@ git add .
 git commit -m "feat: add authentication"
 git push origin thread-1-add-auth-feature
 ```
+
+## Frontend Integration
+
+If `SEER_FRONTEND_PATH` is configured in `config`, ISO automatically:
+- Updates frontend `.env` when threads are initialized
+- Sets `VITE_BACKEND_API_URL=http://localhost:<thread-api-port>`
+- Backs up original `.env` to `.env.original`
+- Restores original `.env` when thread is cleaned up
+
+**Manual frontend setup** (if not using ISO integration):
+```bash
+# In seer-frontend/.env
+VITE_BACKEND_API_URL=http://localhost:10202  # Use thread's API_PORT
+```
+
+**Switching threads:**
+1. Cleanup old thread: `iso cleanup <old-thread-id>`
+2. Initialize new thread: `iso init "feature-name" dev`
+3. Frontend automatically points to new thread's API port
 
 ## Isolation Benefits
 
