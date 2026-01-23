@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "iso": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/Users/pika/Projects/iso/mcp-server/dist/index.js"]
+    }
+  }
+}

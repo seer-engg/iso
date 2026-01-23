@@ -19,7 +19,7 @@ export async function cleanupThread(input: CleanupThreadInput): Promise<CleanupT
   const scriptPath = join(paths.scriptsDir, 'thread-cleanup.sh');
 
   return new Promise((resolve) => {
-    const proc = spawn(scriptPath, [input.threadId.toString()], {
+    const proc = spawn(scriptPath, [input.threadId.toString(), '--force'], {
       cwd: paths.repoRoot,
       env: { ...process.env },
     });

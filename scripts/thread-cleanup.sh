@@ -26,13 +26,30 @@ fi
 
 # Usage
 if [[ $# -lt 1 ]]; then
-    echo "Usage: thread-cleanup.sh <thread-id>" >&2
+    echo "Usage: thread-cleanup.sh <thread-id> [--force]" >&2
     echo "" >&2
     echo "Example: thread-cleanup.sh 1" >&2
+    echo "  --force: Skip confirmation prompt" >&2
     exit 1
 fi
 
 THREAD_ID="$1"
+FORCE_CLEANUP=false
+
+# Check for --force flag
+shift
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force|-f)
+            FORCE_CLEANUP=true
+            shift
+            ;;
+        *)
+            echo "Error: Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Validate thread ID
 if ! [[ "$THREAD_ID" =~ ^[0-9]+$ ]]; then
@@ -62,12 +79,14 @@ echo "  Created: $created"
 echo ""
 
 # Confirm cleanup
-read -p "Are you sure you want to cleanup thread $THREAD_ID? (y/N): " -n 1 -r
-echo ""
+if [[ "$FORCE_CLEANUP" != "true" ]]; then
+    read -p "Are you sure you want to cleanup thread $THREAD_ID? (y/N): " -n 1 -r
+    echo ""
 
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Cleanup cancelled"
-    exit 0
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Cleanup cancelled"
+        exit 0
+    fi
 fi
 
 echo ""
