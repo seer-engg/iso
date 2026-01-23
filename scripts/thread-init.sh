@@ -63,7 +63,7 @@ if [[ $? -ne 0 ]]; then
 fi
 
 # Parse allocation result
-IFS='|' read -r THREAD_ID PG_PORT REDIS_PORT API_PORT WORKER_PORT WORKTREE_PATH <<< "$ALLOCATION"
+IFS='|' read -r THREAD_ID PG_PORT REDIS_PORT API_PORT WORKER_PORT FRONTEND_PORT WORKTREE_PATH <<< "$ALLOCATION"
 
 BRANCH_NAME="thread-$THREAD_ID-$FEATURE_SLUG"
 THREAD_DIR="$SEER_REPO_PATH/.worktrees/thread-$THREAD_ID"
@@ -133,24 +133,53 @@ fi
 echo "✓ .env.thread created"
 echo ""
 
-# Update frontend .env if frontend path configured
+# Setup frontend worktree if frontend path configured
 if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
-    echo "Updating frontend configuration..."
+    echo "Setting up frontend worktree..."
 
-    # Backup original frontend .env if not already backed up
-    if [[ -f "$SEER_FRONTEND_PATH/.env" ]] && [[ ! -f "$SEER_FRONTEND_PATH/.env.original" ]]; then
-        cp "$SEER_FRONTEND_PATH/.env" "$SEER_FRONTEND_PATH/.env.original"
-        echo "✓ Original frontend .env backed up"
+    FRONTEND_WORKTREE_ROOT="$REPO_ROOT/worktrees/frontend"
+    FRONTEND_WORKTREE_DIR="$FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
+
+    mkdir -p "$FRONTEND_WORKTREE_ROOT"
+
+    # Create frontend worktree using same branch
+    cd "$SEER_FRONTEND_PATH"
+    if ! git worktree add "$FRONTEND_WORKTREE_DIR" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
+        echo "Error: Failed to create frontend worktree" >&2
+        cd "$SEER_REPO_PATH"
+        git worktree remove --force "$THREAD_DIR"
+        "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
+        exit 1
     fi
 
-    # Read existing .env and update VITE_BACKEND_API_URL
+    # Copy .env from main frontend
     if [[ -f "$SEER_FRONTEND_PATH/.env" ]]; then
-        sed -i.bak "s|^VITE_BACKEND_API_URL=.*|VITE_BACKEND_API_URL=http://localhost:$API_PORT|" "$SEER_FRONTEND_PATH/.env"
-        rm "$SEER_FRONTEND_PATH/.env.bak"
-        echo "✓ Frontend .env updated to use port $API_PORT"
-    else
-        echo "Warning: Frontend .env not found at $SEER_FRONTEND_PATH/.env" >&2
+        cp "$SEER_FRONTEND_PATH/.env" "$FRONTEND_WORKTREE_DIR/.env"
     fi
+
+    # Append thread-specific overrides
+    cat >> "$FRONTEND_WORKTREE_DIR/.env" <<ENVEOF
+
+# Thread $THREAD_ID overrides
+THREAD_ID=$THREAD_ID
+VITE_DEV_PORT=$FRONTEND_PORT
+VITE_BACKEND_API_URL=http://localhost:$API_PORT
+ENVEOF
+
+    # Install dependencies
+    cd "$FRONTEND_WORKTREE_DIR"
+    if command -v bun >/dev/null 2>&1; then
+        if bun install 2>&1; then
+            echo "✓ Frontend dependencies installed"
+        else
+            echo "Warning: bun install failed" >&2
+        fi
+    else
+        echo "Warning: bun not found, skipping frontend dependency installation" >&2
+    fi
+
+    echo "✓ Frontend worktree: $FRONTEND_WORKTREE_DIR"
+    echo "✓ Branch: $BRANCH_NAME"
     echo ""
 fi
 
@@ -233,8 +262,14 @@ echo "  Redis:    redis://localhost:$REDIS_PORT/0"
 echo ""
 echo "Frontend Configuration:"
 if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
+    FRONTEND_WORKTREE_ROOT="$REPO_ROOT/worktrees/frontend"
+    echo "  Worktree: $FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
+    echo "  Dev port: $FRONTEND_PORT"
     echo "  Backend URL: http://localhost:$API_PORT"
-    echo "  Frontend .env: Updated automatically"
+    echo ""
+    echo "  To start frontend:"
+    echo "    cd $FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
+    echo "    bun dev"
 else
     echo "  ⚠️  Frontend not configured in ISO config"
     echo "  Manually update frontend .env:"

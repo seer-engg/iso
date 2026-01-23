@@ -112,6 +112,7 @@ allocate_thread() {
     local redis_port=$((base_port + 1))
     local api_port=$((base_port + 2))
     local worker_port=$((base_port + 3))
+    local frontend_port=$((5173 + next_id))
 
     # Verify all ports are available
     local ports=($pg_port $redis_port $api_port $worker_port)
@@ -128,10 +129,10 @@ allocate_thread() {
 
     # Add to registry
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    echo "$next_id|$branch_name|$pg_port|$redis_port|$api_port|$worker_port|$worktree_path|$timestamp|initializing" >> "$REGISTRY_FILE"
+    echo "$next_id|$branch_name|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$worktree_path|$timestamp|initializing" >> "$REGISTRY_FILE"
 
     # Output result (for parent script to capture)
-    echo "$next_id|$pg_port|$redis_port|$api_port|$worker_port|$worktree_path"
+    echo "$next_id|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$worktree_path"
 
     release_lock
 }
@@ -147,11 +148,11 @@ update_thread_status() {
     local temp_file="$REGISTRY_FILE.tmp"
 
     # Update status
-    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port wt_path created status; do
+    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port frontend_port wt_path created status; do
         if [[ "$tid" == "$thread_id" ]]; then
-            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$new_status"
+            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$wt_path|$created|$new_status"
         else
-            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$status"
+            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$wt_path|$created|$status"
         fi
     done < "$REGISTRY_FILE" > "$temp_file"
 
@@ -185,9 +186,9 @@ remove_thread() {
 get_thread_info() {
     local thread_id=$1
 
-    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port wt_path created status; do
+    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port frontend_port wt_path created status; do
         if [[ "$tid" == "$thread_id" ]]; then
-            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$wt_path|$created|$status"
+            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$wt_path|$created|$status"
             return 0
         fi
     done < "$REGISTRY_FILE"

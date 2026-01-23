@@ -39,11 +39,11 @@ fi
 echo ""
 echo "Repository: $SEER_REPO_PATH"
 echo ""
-printf "%-8s %-30s %-12s %-22s %-13s %-20s\n" "THREAD" "BRANCH" "STATUS" "PORTS(PG/RD/API)" "CONTAINERS" "WORKTREE"
-echo "--------------------------------------------------------------------------------------------------------"
+printf "%-8s %-30s %-12s %-22s %-10s %-13s %-20s\n" "THREAD" "BRANCH" "STATUS" "PORTS(PG/RD/API)" "FRONTEND" "CONTAINERS" "WORKTREE"
+echo "--------------------------------------------------------------------------------------------------------------------"
 
 # Read and display threads
-while IFS='|' read -r thread_id branch pg_port redis_port api_port worker_port wt_path created status; do
+while IFS='|' read -r thread_id branch pg_port redis_port api_port worker_port frontend_port wt_path created status; do
     # Skip empty lines
     if [[ -z "$thread_id" ]]; then
         continue
@@ -82,16 +82,21 @@ while IFS='|' read -r thread_id branch pg_port redis_port api_port worker_port w
     wt_relative=$(echo "$wt_path" | sed "s|$SEER_REPO_PATH/||")
 
     # Print row
-    printf "%-8s %-30s %-12s %-22s %-13s %-20s\n" \
+    printf "%-8s %-30s %-12s %-22s %-10s %-13s %-20s\n" \
         "$thread_id" \
         "$branch" \
         "$status" \
         "$ports" \
+        "$frontend_port" \
         "$container_status" \
         "$wt_relative"
 
 done < "$REGISTRY_FILE"
 
+echo ""
+echo "Worktree Locations:"
+echo "  Backend:  \$SEER_REPO/.worktrees/thread-<id>/"
+echo "  Frontend: $REPO_ROOT/worktrees/frontend/thread-<id>/"
 echo ""
 echo "Commands:"
 echo "  iso init <feature> [base]    Create new thread"

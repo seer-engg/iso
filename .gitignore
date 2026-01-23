@@ -1,6 +1,9 @@
 # User-specific configuration
 config
 
+# Thread worktrees
+worktrees/
+
 # macOS
 .DS_Store
 

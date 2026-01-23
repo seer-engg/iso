@@ -49,7 +49,7 @@ if [[ -z "$THREAD_INFO" ]]; then
 fi
 
 # Parse thread info
-IFS='|' read -r tid branch pg_port redis_port api_port worker_port wt_path created status <<< "$THREAD_INFO"
+IFS='|' read -r tid branch pg_port redis_port api_port worker_port frontend_port wt_path created status <<< "$THREAD_INFO"
 
 # Display thread info
 echo "Thread $THREAD_ID details:"
@@ -122,14 +122,29 @@ fi
 
 echo ""
 
-# Restore frontend .env if it was modified
+# Remove frontend worktree if it exists
 if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
-    if [[ -f "$SEER_FRONTEND_PATH/.env.original" ]]; then
-        echo "Restoring frontend configuration..."
-        mv "$SEER_FRONTEND_PATH/.env.original" "$SEER_FRONTEND_PATH/.env"
-        echo "✓ Frontend .env restored to original"
-        echo ""
+    FRONTEND_WORKTREE_DIR="$REPO_ROOT/worktrees/frontend/thread-$THREAD_ID"
+    if [[ -d "$FRONTEND_WORKTREE_DIR" ]]; then
+        echo "Removing frontend worktree..."
+        cd "$SEER_FRONTEND_PATH"
+        if git worktree remove "$FRONTEND_WORKTREE_DIR" 2>&1; then
+            echo "✓ Frontend worktree removed"
+        else
+            echo "Warning: Failed to remove frontend worktree normally, trying force..." >&2
+            if git worktree remove --force "$FRONTEND_WORKTREE_DIR" 2>&1; then
+                echo "✓ Frontend worktree force removed"
+            else
+                echo "Warning: Failed to remove frontend worktree: $FRONTEND_WORKTREE_DIR" >&2
+            fi
+        fi
+        # Cleanup directory if it still exists
+        rm -rf "$FRONTEND_WORKTREE_DIR" 2>/dev/null || true
+        # Prune frontend worktrees
+        git worktree prune 2>/dev/null || true
+        cd "$SEER_REPO_PATH"
     fi
+    echo ""
 fi
 
 # Remove worktree
