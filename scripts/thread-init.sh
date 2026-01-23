@@ -63,15 +63,14 @@ if [[ $? -ne 0 ]]; then
 fi
 
 # Parse allocation result
-IFS='|' read -r THREAD_ID PG_PORT REDIS_PORT API_PORT WORKER_PORT FRONTEND_PORT WORKTREE_PATH <<< "$ALLOCATION"
+IFS='|' read -r THREAD_ID BACKEND_PORT FRONTEND_PORT WORKTREE_PATH <<< "$ALLOCATION"
 
 BRANCH_NAME="thread-$THREAD_ID-$FEATURE_SLUG"
 THREAD_DIR="$SEER_REPO_PATH/.worktrees/thread-$THREAD_ID"
 
 echo "✓ Thread $THREAD_ID allocated"
-echo "  Postgres: localhost:$PG_PORT"
-echo "  Redis: localhost:$REDIS_PORT"
-echo "  API: localhost:$API_PORT"
+echo "  Backend:  localhost:$BACKEND_PORT"
+echo "  Frontend: localhost:$FRONTEND_PORT"
 echo ""
 
 # Create git worktree
@@ -99,10 +98,7 @@ fi
 
 # Substitute template variables
 sed -e "s|{{THREAD_ID}}|$THREAD_ID|g" \
-    -e "s|{{PG_PORT}}|$PG_PORT|g" \
-    -e "s|{{REDIS_PORT}}|$REDIS_PORT|g" \
-    -e "s|{{API_PORT}}|$API_PORT|g" \
-    -e "s|{{WORKER_PORT}}|$WORKER_PORT|g" \
+    -e "s|{{BACKEND_PORT}}|$BACKEND_PORT|g" \
     -e "s|{{THREAD_DIR}}|$THREAD_DIR|g" \
     "$TEMPLATE_FILE" > "$THREAD_DIR/docker-compose.thread.yml"
 
@@ -117,10 +113,9 @@ cat > "$THREAD_DIR/.env.thread" <<EOF
 
 THREAD_ID=$THREAD_ID
 THREAD_BRANCH=$BRANCH_NAME
-DATABASE_URL=postgresql://postgres:postgres@localhost:$PG_PORT/seer
-REDIS_URL=redis://localhost:$REDIS_PORT/0
-API_PORT=$API_PORT
-WORKER_DEBUG_PORT=$WORKER_PORT
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/seer
+REDIS_URL=redis://redis:6379/0
+BACKEND_PORT=$BACKEND_PORT
 EOF
 
 # Copy secrets from main .env if it exists
@@ -163,7 +158,7 @@ if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
 # Thread $THREAD_ID overrides
 THREAD_ID=$THREAD_ID
 VITE_DEV_PORT=$FRONTEND_PORT
-VITE_BACKEND_API_URL=http://localhost:$API_PORT
+VITE_BACKEND_API_URL=http://localhost:$BACKEND_PORT
 ENVEOF
 
     # Install dependencies
@@ -230,7 +225,7 @@ echo ""
 
 # Run database migrations
 echo "Running database migrations..."
-export DATABASE_URL="postgresql://postgres:postgres@localhost:$PG_PORT/seer"
+export DATABASE_URL="postgresql://postgres:postgres@postgres:5432/seer"
 
 if command -v uv >/dev/null 2>&1; then
     if uv run aerich upgrade 2>&1; then
@@ -256,16 +251,16 @@ echo "Branch: $BRANCH_NAME"
 echo "Worktree: $THREAD_DIR"
 echo ""
 echo "Services:"
-echo "  API:      http://localhost:$API_PORT"
-echo "  Postgres: postgresql://postgres:postgres@localhost:$PG_PORT/seer"
-echo "  Redis:    redis://localhost:$REDIS_PORT/0"
+echo "  Backend API: http://localhost:$BACKEND_PORT"
+echo "  Postgres:    postgres:5432 (internal only)"
+echo "  Redis:       redis:6379 (internal only)"
 echo ""
 echo "Frontend Configuration:"
 if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
     FRONTEND_WORKTREE_ROOT="$REPO_ROOT/worktrees/frontend"
     echo "  Worktree: $FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
     echo "  Dev port: $FRONTEND_PORT"
-    echo "  Backend URL: http://localhost:$API_PORT"
+    echo "  Backend URL: http://localhost:$BACKEND_PORT"
     echo ""
     echo "  To start frontend:"
     echo "    cd $FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
@@ -273,7 +268,7 @@ if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
 else
     echo "  ⚠️  Frontend not configured in ISO config"
     echo "  Manually update frontend .env:"
-    echo "      VITE_BACKEND_API_URL=http://localhost:$API_PORT"
+    echo "      VITE_BACKEND_API_URL=http://localhost:$BACKEND_PORT"
 fi
 echo ""
 echo "Next steps:"
@@ -283,7 +278,7 @@ echo ""
 echo "Commands:"
 echo "  docker compose -f docker-compose.thread.yml logs -f"
 echo "  uv run pytest"
-echo "  curl http://localhost:$API_PORT/health"
+echo "  curl http://localhost:$BACKEND_PORT/health"
 echo ""
 echo "When done:"
 echo "  git push origin $BRANCH_NAME"

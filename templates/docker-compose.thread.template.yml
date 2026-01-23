@@ -2,8 +2,6 @@ services:
   postgres:
     container_name: seer-thread-{{THREAD_ID}}-postgres
     image: postgres:16-alpine
-    ports:
-      - "{{PG_PORT}}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -22,8 +20,6 @@ services:
   redis:
     container_name: seer-thread-{{THREAD_ID}}-redis
     image: redis:7-alpine
-    ports:
-      - "{{REDIS_PORT}}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -38,7 +34,7 @@ services:
       context: {{THREAD_DIR}}
       dockerfile: Dockerfile
     ports:
-      - "{{API_PORT}}:8000"
+      - "{{BACKEND_PORT}}:8000"
     depends_on:
       postgres:
         condition: service_healthy

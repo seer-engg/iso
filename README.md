@@ -29,11 +29,14 @@ nano config
 
 # 2. (Optional) Configure frontend integration
 # Add to config: SEER_FRONTEND_PATH=/Users/pika/Projects/seer-frontend
-# This auto-updates frontend .env to use thread-specific ports
+# This creates frontend worktrees automatically
 
 # 3. Add to PATH
 echo 'export PATH="/Users/pika/Projects/iso:$PATH"' >> ~/.zshrc
 source ~/.zshrc
+
+# 4. (Optional) Install MCP server for Claude Desktop/Cursor
+./install-mcp.sh
 ```
 
 ### Daily Workflow
@@ -86,9 +89,9 @@ Display all active threads.
 iso list
 
 # Output:
-# THREAD  BRANCH                 STATUS   PORTS(PG/RD/API)      CONTAINERS
-# 1       thread-1-add-auth      active   10100/10101/10102    3 running
-# 2       thread-2-fix-bug       active   10200/10201/10202    3 running
+# THREAD  BRANCH                 STATUS   BACKEND  FRONTEND  CONTAINERS
+# 1       thread-1-add-auth      active   3001     4001      3 running
+# 2       thread-2-fix-bug       active   3002     4002      3 running
 ```
 
 **Aliases:** `iso ls`
@@ -115,11 +118,10 @@ iso cleanup 1
 
 ## Port Allocation
 
-Each thread gets 4 ports in a 100-port block:
-- **Thread 1**: 10100 (postgres), 10101 (redis), 10102 (api), 10103 (worker)
-- **Thread 2**: 10200-10203
-- **Thread 3**: 10300-10303
-- **Thread 10**: 11000-11003
+Simplified sequential port scheme:
+- **Backend API**: 3000 + thread_id (Thread 1 = 3001, Thread 2 = 3002, ...)
+- **Frontend**: 4000 + thread_id (Thread 1 = 4001, Thread 2 = 4002, ...)
+- **Postgres/Redis**: Internal Docker network only (postgres:5432, redis:6379)
 
 Main repo continues using default ports (5432, 6379, 8000).
 
@@ -145,6 +147,14 @@ Main repo continues using default ports (5432, 6379, 8000).
     │   └── port-allocator.sh
     ├── templates/
     │   └── docker-compose.thread.template.yml
+    ├── mcp-server/                 # MCP server for Claude Desktop
+    │   ├── src/
+    │   ├── dist/
+    │   └── package.json
+    ├── worktrees/                  # Frontend worktrees
+    │   └── frontend/
+    │       ├── thread-1/
+    │       └── thread-2/
     ├── config                      # Your config (gitignored)
     └── config.example
 ```
@@ -162,8 +172,8 @@ docker compose -f docker-compose.thread.yml logs -f api
 uv run pytest -m unit           # SQLite (fast)
 uv run pytest -m integration    # Thread's Postgres (isolated)
 
-# Test API
-curl http://localhost:10102/health
+# Test API (use your thread's backend port)
+curl http://localhost:3001/health
 
 # Commit and push
 git add .
@@ -174,21 +184,22 @@ git push origin thread-1-add-auth-feature
 ## Frontend Integration
 
 If `SEER_FRONTEND_PATH` is configured in `config`, ISO automatically:
-- Updates frontend `.env` when threads are initialized
-- Sets `VITE_BACKEND_API_URL=http://localhost:<thread-api-port>`
-- Backs up original `.env` to `.env.original`
-- Restores original `.env` when thread is cleaned up
+- Creates frontend worktree in `iso/worktrees/frontend/thread-N/`
+- Sets `VITE_BACKEND_API_URL=http://localhost:<backend-port>` in worktree .env
+- Sets `VITE_DEV_PORT=<frontend-port>` for isolated frontend dev server
+- Removes frontend worktree when thread is cleaned up
+
+**Starting frontend for a thread:**
+```bash
+cd iso/worktrees/frontend/thread-1
+bun dev  # Runs on port 4001
+```
 
 **Manual frontend setup** (if not using ISO integration):
 ```bash
 # In seer-frontend/.env
-VITE_BACKEND_API_URL=http://localhost:10202  # Use thread's API_PORT
+VITE_BACKEND_API_URL=http://localhost:3001  # Use thread's backend port
 ```
-
-**Switching threads:**
-1. Cleanup old thread: `iso cleanup <old-thread-id>`
-2. Initialize new thread: `iso init "feature-name" dev`
-3. Frontend automatically points to new thread's API port
 
 ## Isolation Benefits
 
@@ -206,11 +217,45 @@ Each thread is completely isolated:
 
 ## Troubleshooting
 
+## MCP Integration
+
+ISO can be used from Claude Desktop, Cursor, and other MCP-compatible AI tools.
+
+### Installation
+
+```bash
+./install-mcp.sh
+```
+
+Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "iso": {
+      "command": "node",
+      "args": ["/Users/pika/Projects/iso/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+- **iso_init_thread**: Create new thread
+- **iso_list_threads**: List all threads with status
+- **iso_get_thread_info**: Get detailed thread info
+- **iso_cleanup_thread**: Clean up thread resources
+
+See [mcp-server/README.md](mcp-server/README.md) for detailed documentation.
+
+## Troubleshooting
+
 ### Port conflicts
 
 ```bash
 # Check what's using a port
-lsof -i :10100
+lsof -i :3001
 
 # Force cleanup and retry
 iso cleanup 1
@@ -248,7 +293,7 @@ iso init "feature-name" dev
 # View raw registry
 cat /Users/pika/Projects/seer/.worktrees/.thread-registry
 
-# Format: thread_id|branch|pg_port|redis_port|api_port|worker_port|worktree_path|created_at|status
+# Format: thread_id|branch|backend_port|frontend_port|worktree_path|created_at|status
 ```
 
 ## Resource Requirements
@@ -297,11 +342,11 @@ SEER_REPO_PATH="/Users/pika/Projects/seer-fork" iso init "test" dev
 # Thread containers running?
 docker ps | grep seer-thread-1
 
-# Thread database accessible?
-psql postgresql://postgres:postgres@localhost:10100/seer -c "SELECT 1"
+# Thread database accessible? (only from within Docker containers)
+docker exec seer-thread-1-postgres psql -U postgres -c "SELECT 1"
 
 # Thread API responding?
-curl http://localhost:10102/health
+curl http://localhost:3001/health
 ```
 
 ## FAQ
@@ -310,7 +355,7 @@ curl http://localhost:10102/health
 A: No. The main repo at `/Users/pika/Projects/seer` remains untouched. Only `.worktrees/` directory is created (already gitignored).
 
 **Q: Can I use my main repo normally while threads are running?**
-A: Yes. Main repo's docker-compose.yml uses different ports (5432, 6379, 8000).
+A: Yes. Main repo's docker-compose.yml uses default ports (5432, 6379, 8000), which don't conflict with thread ports (3001+, 4001+).
 
 **Q: What happens if I forget to cleanup threads?**
 A: No problem. Use `iso list` to see all active threads, cleanup anytime with `iso cleanup N`.

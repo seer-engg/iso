@@ -26,7 +26,6 @@ if [[ ! -d "$SEER_REPO_PATH" ]]; then
 fi
 
 # Configuration
-THREAD_PORT_BASE="${THREAD_PORT_BASE:-10000}"
 MAX_THREADS="${MAX_THREADS:-10}"
 WORKTREE_DIR="$SEER_REPO_PATH/.worktrees"
 REGISTRY_FILE="$WORKTREE_DIR/.thread-registry"
@@ -106,16 +105,12 @@ allocate_thread() {
         return 1
     fi
 
-    # Calculate ports
-    local base_port=$((THREAD_PORT_BASE + (next_id * 100)))
-    local pg_port=$base_port
-    local redis_port=$((base_port + 1))
-    local api_port=$((base_port + 2))
-    local worker_port=$((base_port + 3))
-    local frontend_port=$((5173 + next_id))
+    # Calculate ports (simplified scheme: 3000+id for backend, 4000+id for frontend)
+    local backend_port=$((3000 + next_id))
+    local frontend_port=$((4000 + next_id))
 
-    # Verify all ports are available
-    local ports=($pg_port $redis_port $api_port $worker_port)
+    # Verify ports are available
+    local ports=($backend_port $frontend_port)
     for port in "${ports[@]}"; do
         if ! check_port_available "$port"; then
             echo "Error: Port $port already in use" >&2
@@ -129,10 +124,10 @@ allocate_thread() {
 
     # Add to registry
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    echo "$next_id|$branch_name|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$worktree_path|$timestamp|initializing" >> "$REGISTRY_FILE"
+    echo "$next_id|$branch_name|$backend_port|$frontend_port|$worktree_path|$timestamp|initializing" >> "$REGISTRY_FILE"
 
     # Output result (for parent script to capture)
-    echo "$next_id|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$worktree_path"
+    echo "$next_id|$backend_port|$frontend_port|$worktree_path"
 
     release_lock
 }
@@ -148,11 +143,11 @@ update_thread_status() {
     local temp_file="$REGISTRY_FILE.tmp"
 
     # Update status
-    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port frontend_port wt_path created status; do
+    while IFS='|' read -r tid branch backend_port frontend_port wt_path created status; do
         if [[ "$tid" == "$thread_id" ]]; then
-            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$wt_path|$created|$new_status"
+            echo "$tid|$branch|$backend_port|$frontend_port|$wt_path|$created|$new_status"
         else
-            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$wt_path|$created|$status"
+            echo "$tid|$branch|$backend_port|$frontend_port|$wt_path|$created|$status"
         fi
     done < "$REGISTRY_FILE" > "$temp_file"
 
@@ -186,9 +181,9 @@ remove_thread() {
 get_thread_info() {
     local thread_id=$1
 
-    while IFS='|' read -r tid branch pg_port redis_port api_port worker_port frontend_port wt_path created status; do
+    while IFS='|' read -r tid branch backend_port frontend_port wt_path created status; do
         if [[ "$tid" == "$thread_id" ]]; then
-            echo "$tid|$branch|$pg_port|$redis_port|$api_port|$worker_port|$frontend_port|$wt_path|$created|$status"
+            echo "$tid|$branch|$backend_port|$frontend_port|$wt_path|$created|$status"
             return 0
         fi
     done < "$REGISTRY_FILE"

@@ -39,11 +39,11 @@ fi
 echo ""
 echo "Repository: $SEER_REPO_PATH"
 echo ""
-printf "%-8s %-30s %-12s %-22s %-10s %-13s %-20s\n" "THREAD" "BRANCH" "STATUS" "PORTS(PG/RD/API)" "FRONTEND" "CONTAINERS" "WORKTREE"
-echo "--------------------------------------------------------------------------------------------------------------------"
+printf "%-8s %-30s %-12s %-12s %-10s %-13s %-20s\n" "THREAD" "BRANCH" "STATUS" "BACKEND" "FRONTEND" "CONTAINERS" "WORKTREE"
+echo "------------------------------------------------------------------------------------------------------------"
 
 # Read and display threads
-while IFS='|' read -r thread_id branch pg_port redis_port api_port worker_port frontend_port wt_path created status; do
+while IFS='|' read -r thread_id branch backend_port frontend_port wt_path created status; do
     # Skip empty lines
     if [[ -z "$thread_id" ]]; then
         continue
@@ -70,9 +70,6 @@ while IFS='|' read -r thread_id branch pg_port redis_port api_port worker_port f
         container_status="$running_count running"
     fi
 
-    # Format ports
-    ports="$pg_port/$redis_port/$api_port"
-
     # Truncate branch name if too long
     if [[ ${#branch} -gt 30 ]]; then
         branch="${branch:0:27}..."
@@ -82,11 +79,11 @@ while IFS='|' read -r thread_id branch pg_port redis_port api_port worker_port f
     wt_relative=$(echo "$wt_path" | sed "s|$SEER_REPO_PATH/||")
 
     # Print row
-    printf "%-8s %-30s %-12s %-22s %-10s %-13s %-20s\n" \
+    printf "%-8s %-30s %-12s %-12s %-10s %-13s %-20s\n" \
         "$thread_id" \
         "$branch" \
         "$status" \
-        "$ports" \
+        "$backend_port" \
         "$frontend_port" \
         "$container_status" \
         "$wt_relative"
