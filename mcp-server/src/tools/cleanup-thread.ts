@@ -18,7 +18,14 @@ export async function cleanupThread(input: CleanupThreadInput): Promise<CleanupT
   const paths = getIsoPaths();
   const scriptPath = join(paths.scriptsDir, 'thread-cleanup.sh');
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    // 60 second timeout for cleanup operations
+    const timeout = setTimeout(() => {
+      proc.kill('SIGTERM');
+      setTimeout(() => proc.kill('SIGKILL'), 5000);
+      reject(new Error('Cleanup timed out after 60 seconds'));
+    }, 60000);
+
     const proc = spawn(scriptPath, [input.threadId.toString(), '--force'], {
       cwd: paths.repoRoot,
       env: { ...process.env },
@@ -35,7 +42,16 @@ export async function cleanupThread(input: CleanupThreadInput): Promise<CleanupT
       stderr += data.toString();
     });
 
+    proc.on('error', (error) => {
+      clearTimeout(timeout);
+      resolve({
+        success: false,
+        message: `Cleanup script error: ${error.message}`,
+      });
+    });
+
     proc.on('close', (code) => {
+      clearTimeout(timeout);
       if (code !== 0) {
         resolve({
           success: false,

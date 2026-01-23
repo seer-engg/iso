@@ -66,14 +66,14 @@ if [[ -z "$THREAD_INFO" ]]; then
 fi
 
 # Parse thread info
-IFS='|' read -r tid branch pg_port redis_port api_port worker_port frontend_port wt_path created status <<< "$THREAD_INFO"
+IFS='|' read -r tid branch backend_port frontend_port wt_path created status <<< "$THREAD_INFO"
 
 # Display thread info
 echo "Thread $THREAD_ID details:"
 echo "  Branch: $branch"
 echo "  Worktree: $wt_path"
-echo "  Postgres: localhost:$pg_port"
-echo "  API: localhost:$api_port"
+echo "  Backend: localhost:$backend_port"
+echo "  Frontend: localhost:$frontend_port"
 echo "  Status: $status"
 echo "  Created: $created"
 echo ""
