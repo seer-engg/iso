@@ -19,7 +19,7 @@ if [[ -z "${SEER_REPO_PATH:-}" ]]; then
     exit 1
 fi
 
-REGISTRY_FILE="$SEER_REPO_PATH/.worktrees/.thread-registry"
+REGISTRY_FILE="$REPO_ROOT/worktrees/.thread-registry"
 BACKUP_FILE="$REGISTRY_FILE.backup-$(date +%Y%m%d-%H%M%S)"
 
 # Check if registry exists

@@ -44,7 +44,7 @@ source ~/.zshrc
 ```bash
 # Start new thread
 iso init "add-auth-feature" dev
-cd /Users/pika/Projects/seer/.worktrees/thread-1
+cd /Users/pika/Projects/iso/worktrees/backend/thread-1
 # Open Claude Code here
 
 # Check active threads
@@ -130,15 +130,10 @@ Main repo continues using default ports (5432, 6379, 8000).
 ```
 /Users/pika/Projects/
 ├── seer/                           # Main repo (unchanged)
-│   ├── src/, tests/, etc.          # Source code
-│   └── .worktrees/                 # Created by iso (gitignored)
-│       ├── thread-1/               # Isolated worktree for thread 1
-│       │   ├── docker-compose.thread.yml
-│       │   ├── .env.thread
-│       │   └── [full repo files]
-│       ├── thread-2/
-│       └── .thread-registry        # Active threads tracking
-└── iso/                            # This repo
+│   └── src/, tests/, etc.          # Source code
+├── seer-frontend/                  # Frontend repo (unchanged)
+│   └── src/, components/, etc.     # Frontend source code
+└── iso/                            # ISO - manages all isolated threads
     ├── iso                         # Main CLI (add to PATH)
     ├── scripts/
     │   ├── thread-init.sh
@@ -151,9 +146,18 @@ Main repo continues using default ports (5432, 6379, 8000).
     │   ├── src/
     │   ├── dist/
     │   └── package.json
-    ├── worktrees/                  # Frontend worktrees
+    ├── worktrees/                  # All thread worktrees (centralized)
+    │   ├── .thread-registry        # Active threads tracking
+    │   ├── backend/
+    │   │   ├── thread-1/           # Backend worktree for thread 1
+    │   │   │   ├── docker-compose.thread.yml
+    │   │   │   ├── .env.thread
+    │   │   │   └── [full repo files]
+    │   │   └── thread-2/
     │   └── frontend/
-    │       ├── thread-1/
+    │       ├── thread-1/           # Frontend worktree for thread 1
+    │       │   ├── .env
+    │       │   └── [full repo files]
     │       └── thread-2/
     ├── config                      # Your config (gitignored)
     └── config.example
@@ -163,7 +167,7 @@ Main repo continues using default ports (5432, 6379, 8000).
 
 ```bash
 # Navigate to thread
-cd /Users/pika/Projects/seer/.worktrees/thread-1
+cd /Users/pika/Projects/iso/worktrees/backend/thread-1
 
 # View logs
 docker compose -f docker-compose.thread.yml logs -f api
@@ -184,14 +188,14 @@ git push origin thread-1-add-auth-feature
 ## Frontend Integration
 
 If `SEER_FRONTEND_PATH` is configured in `config`, ISO automatically:
-- Creates frontend worktree in `iso/worktrees/frontend/thread-N/`
+- Creates frontend worktree in `~/Projects/iso/worktrees/frontend/thread-N/`
 - Sets `VITE_BACKEND_API_URL=http://localhost:<backend-port>` in worktree .env
 - Sets `VITE_DEV_PORT=<frontend-port>` for isolated frontend dev server
 - Removes frontend worktree when thread is cleaned up
 
 **Starting frontend for a thread:**
 ```bash
-cd iso/worktrees/frontend/thread-1
+cd ~/Projects/iso/worktrees/frontend/thread-1
 bun dev  # Runs on port 4001
 ```
 
@@ -207,13 +211,69 @@ Each thread is completely isolated:
 
 | Resource | Isolation Method |
 |----------|------------------|
-| Files | Separate git worktree |
+| Files | Separate git worktree (in iso/worktrees/) |
 | Database | Unique Postgres instance on unique port |
 | Cache | Unique Redis instance on unique port |
 | API | Unique port per thread |
 | Docker | Thread-specific container names, volumes, networks |
 
 **Result:** No cross-contamination, independent verification, parallel PRs.
+
+All thread resources are managed centrally in `~/Projects/iso/worktrees/` for easy cleanup and organization.
+
+## Migration Guide
+
+### Upgrading from Old Worktree Structure
+
+If you previously used ISO and have threads in `$SEER_REPO/.worktrees/`, follow these steps to migrate to the new centralized structure:
+
+**Option 1: Clean Slate (Recommended)**
+
+```bash
+# 1. Cleanup all existing threads
+iso list
+iso cleanup 1
+iso cleanup 2
+# ... cleanup all threads
+
+# 2. Remove old worktrees directory from seer repo
+rm -rf ~/Projects/seer/.worktrees
+
+# 3. New threads will automatically use new location
+iso init "my-feature" dev
+# Creates: ~/Projects/iso/worktrees/backend/thread-1/
+```
+
+**Option 2: Manual Migration (Keep Active Work)**
+
+```bash
+# For each active thread, preserve your changes:
+
+# 1. List threads and note their IDs
+iso list
+
+# 2. For each thread, commit your work
+cd ~/Projects/seer/.worktrees/thread-1
+git add .
+git commit -m "WIP: preserve thread work"
+git push origin thread-1-my-feature
+
+# 3. Cleanup old thread
+iso cleanup 1
+
+# 4. Recreate thread from pushed branch
+cd ~/Projects/seer
+git worktree add ~/Projects/iso/worktrees/backend/thread-1 thread-1-my-feature
+
+# 5. Manually update registry (advanced)
+# Or just use: iso init and cherry-pick your commits
+```
+
+**What Changed:**
+- **Before:** Backend worktrees in `$SEER_REPO/.worktrees/thread-N/`
+- **After:** Backend worktrees in `~/Projects/iso/worktrees/backend/thread-N/`
+- **Registry:** Moved from `$SEER_REPO/.worktrees/.thread-registry` to `~/Projects/iso/worktrees/.thread-registry`
+- **Frontend:** Already in `~/Projects/iso/worktrees/frontend/thread-N/` (no change)
 
 ## Troubleshooting
 
@@ -280,7 +340,7 @@ iso init "feature-name" dev
 
 ```bash
 # View thread logs
-cd .worktrees/thread-1
+cd ~/Projects/iso/worktrees/backend/thread-1
 docker compose -f docker-compose.thread.yml logs
 
 # Rebuild containers
@@ -294,10 +354,17 @@ docker compose -f docker-compose.thread.yml up -d
 ### Worktree corrupted
 
 ```bash
-# Remove and recreate
+# Remove and recreate (backend)
 cd /Users/pika/Projects/seer
-git worktree remove --force .worktrees/thread-1
+git worktree remove --force /Users/pika/Projects/iso/worktrees/backend/thread-1
 git worktree prune
+
+# Remove frontend (if exists)
+cd /Users/pika/Projects/seer-frontend
+git worktree remove --force /Users/pika/Projects/iso/worktrees/frontend/thread-1
+git worktree prune
+
+# Recreate thread
 iso init "feature-name" dev
 ```
 
@@ -305,7 +372,7 @@ iso init "feature-name" dev
 
 ```bash
 # View raw registry
-cat /Users/pika/Projects/seer/.worktrees/.thread-registry
+cat ~/Projects/iso/worktrees/.thread-registry
 
 # Format: thread_id|branch|backend_port|frontend_port|worktree_path|created_at|status
 ```
@@ -366,7 +433,7 @@ curl http://localhost:3001/health
 ## FAQ
 
 **Q: Does this change my main seer repo?**
-A: No. The main repo at `/Users/pika/Projects/seer` remains untouched. Only `.worktrees/` directory is created (already gitignored).
+A: No. The main repo at `/Users/pika/Projects/seer` remains completely untouched. All worktrees are created in `~/Projects/iso/worktrees/`.
 
 **Q: Can I use my main repo normally while threads are running?**
 A: Yes. Main repo's docker-compose.yml uses default ports (5432, 6379, 8000), which don't conflict with thread ports (3001+, 4001+).
@@ -375,7 +442,7 @@ A: Yes. Main repo's docker-compose.yml uses default ports (5432, 6379, 8000), wh
 A: No problem. Use `iso list` to see all active threads, cleanup anytime with `iso cleanup N`.
 
 **Q: Do threads share git objects?**
-A: Yes. Worktrees share the same `.git` directory, so they're space-efficient (only ~50MB per worktree).
+A: Yes. Worktrees share the same `.git` directory from the main repo, so they're space-efficient (only ~50MB per worktree).
 
 **Q: Can I create PRs from thread branches?**
 A: Yes. Each thread is a real git branch. Push and create PRs normally.

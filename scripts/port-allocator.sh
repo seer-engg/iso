@@ -27,7 +27,7 @@ fi
 
 # Configuration
 MAX_THREADS="${MAX_THREADS:-10}"
-WORKTREE_DIR="$SEER_REPO_PATH/.worktrees"
+WORKTREE_DIR="$REPO_ROOT/worktrees"
 REGISTRY_FILE="$WORKTREE_DIR/.thread-registry"
 LOCKFILE="$WORKTREE_DIR/.thread-registry.lock"
 
@@ -120,7 +120,7 @@ allocate_thread() {
     done
 
     # Calculate worktree path
-    local worktree_path="$WORKTREE_DIR/thread-$next_id"
+    local worktree_path="$WORKTREE_DIR/backend/thread-$next_id"
 
     # Add to registry
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

@@ -66,7 +66,7 @@ fi
 IFS='|' read -r THREAD_ID BACKEND_PORT FRONTEND_PORT WORKTREE_PATH <<< "$ALLOCATION"
 
 BRANCH_NAME="thread-$THREAD_ID-$FEATURE_SLUG"
-THREAD_DIR="$SEER_REPO_PATH/.worktrees/thread-$THREAD_ID"
+THREAD_DIR="$REPO_ROOT/worktrees/backend/thread-$THREAD_ID"
 
 echo "✓ Thread $THREAD_ID allocated"
 echo "  Backend:  localhost:$BACKEND_PORT"

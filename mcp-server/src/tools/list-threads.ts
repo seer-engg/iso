@@ -19,7 +19,7 @@ export interface ThreadInfo {
 
 export async function listThreads(): Promise<ThreadInfo[]> {
   const paths = getIsoPaths();
-  const registryPath = join(paths.seerRepoPath, '.worktrees', '.thread-registry');
+  const registryPath = join(paths.repoRoot, 'worktrees', '.thread-registry');
 
   if (!existsSync(registryPath)) {
     return [];

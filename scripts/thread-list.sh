@@ -24,7 +24,7 @@ if [[ ! -d "$SEER_REPO_PATH" ]]; then
     exit 1
 fi
 
-REGISTRY_FILE="$SEER_REPO_PATH/.worktrees/.thread-registry"
+REGISTRY_FILE="$REPO_ROOT/worktrees/.thread-registry"
 
 # Check if registry exists and has threads
 if [[ ! -f "$REGISTRY_FILE" ]] || [[ ! -s "$REGISTRY_FILE" ]]; then
@@ -75,8 +75,8 @@ while IFS='|' read -r thread_id branch backend_port frontend_port wt_path create
         branch="${branch:0:27}..."
     fi
 
-    # Format worktree path (relative to repo)
-    wt_relative=$(echo "$wt_path" | sed "s|$SEER_REPO_PATH/||")
+    # Format worktree path (relative to ISO root)
+    wt_relative=$(echo "$wt_path" | sed "s|$REPO_ROOT/||")
 
     # Print row
     printf "%-8s %-30s %-12s %-12s %-10s %-13s %-20s\n" \
@@ -92,7 +92,7 @@ done < "$REGISTRY_FILE"
 
 echo ""
 echo "Worktree Locations:"
-echo "  Backend:  \$SEER_REPO/.worktrees/thread-<id>/"
+echo "  Backend:  $REPO_ROOT/worktrees/backend/thread-<id>/"
 echo "  Frontend: $REPO_ROOT/worktrees/frontend/thread-<id>/"
 echo ""
 echo "Commands:"
