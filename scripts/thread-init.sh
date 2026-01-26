@@ -162,6 +162,31 @@ ENVEOF
 echo "✓ Frontend .env created"
 echo ""
 
+# Copy Claude Code configuration templates
+echo "Setting up Claude Code configuration..."
+
+# Frontend .claude config
+FRONTEND_CLAUDE_DIR="$FRONTEND_WORKTREE/.claude"
+FRONTEND_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/frontend"
+
+if [[ -d "$FRONTEND_CLAUDE_TEMPLATE" ]]; then
+    mkdir -p "$FRONTEND_CLAUDE_DIR"
+    cp -r "$FRONTEND_CLAUDE_TEMPLATE/"* "$FRONTEND_CLAUDE_DIR/"
+    echo "✓ Frontend Claude Code config copied"
+fi
+
+# Backend .claude config
+BACKEND_CLAUDE_DIR="$BACKEND_WORKTREE/.claude"
+BACKEND_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/backend"
+
+if [[ -d "$BACKEND_CLAUDE_TEMPLATE" ]]; then
+    mkdir -p "$BACKEND_CLAUDE_DIR"
+    cp -r "$BACKEND_CLAUDE_TEMPLATE/"* "$BACKEND_CLAUDE_DIR/"
+    echo "✓ Backend Claude Code config copied"
+fi
+
+echo ""
+
 # Generate devcontainer configuration
 echo "Generating devcontainer configuration..."
 if ! "$SCRIPT_DIR/devcontainer-init.sh" "$THREAD_PARENT_DIR" "$THREAD_ID" "$BACKEND_PORT" "$FRONTEND_PORT"; then
