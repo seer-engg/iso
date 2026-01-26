@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Clean up thread resources (containers, volumes, worktree)
+# Clean up thread resources (devcontainer, volumes, worktrees)
+# Handles unified worktree structure with backend + frontend
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -68,10 +69,15 @@ fi
 # Parse thread info
 IFS='|' read -r tid branch backend_port frontend_port wt_path created status <<< "$THREAD_INFO"
 
+# Determine actual worktree path (new unified structure)
+THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
+BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
+FRONTEND_WORKTREE="$THREAD_PARENT_DIR/frontend"
+
 # Display thread info
 echo "Thread $THREAD_ID details:"
 echo "  Branch: $branch"
-echo "  Worktree: $wt_path"
+echo "  Workspace: $THREAD_PARENT_DIR"
 echo "  Backend: localhost:$backend_port"
 echo "  Frontend: localhost:$frontend_port"
 echo "  Status: $status"
@@ -93,24 +99,24 @@ echo ""
 echo "Cleaning up thread $THREAD_ID..."
 echo ""
 
-# Change to seer repo
-cd "$SEER_REPO_PATH"
-
-# Stop and remove Docker containers
-if [[ -f "$wt_path/docker-compose.thread.yml" ]]; then
-    echo "Stopping Docker containers..."
-    if docker compose -f "$wt_path/docker-compose.thread.yml" down -v 2>&1; then
-        echo "✓ Containers stopped and removed"
+# Stop devcontainer if running
+DEVCONTAINER_COMPOSE="$THREAD_PARENT_DIR/.devcontainer/docker-compose.yml"
+if [[ -f "$DEVCONTAINER_COMPOSE" ]]; then
+    echo "Stopping devcontainer..."
+    cd "$THREAD_PARENT_DIR/.devcontainer"
+    if docker compose down -v 2>&1; then
+        echo "✓ Devcontainer stopped and removed"
     else
-        echo "Warning: Failed to stop containers, they may not be running" >&2
+        echo "Warning: Failed to stop devcontainer, it may not be running" >&2
     fi
+    cd "$REPO_ROOT"
 else
-    echo "Warning: docker-compose.thread.yml not found, skipping container cleanup" >&2
+    echo "Warning: Devcontainer compose file not found, skipping container cleanup" >&2
 fi
 
 echo ""
 
-# Remove Docker volumes (belt and suspenders approach)
+# Remove Docker volumes
 echo "Removing Docker volumes..."
 VOLUMES=(
     "seer-thread-${THREAD_ID}-postgres_data"
@@ -129,7 +135,7 @@ done
 
 echo ""
 
-# Remove Docker network (if exists)
+# Remove Docker network
 NETWORK="seer-thread-${THREAD_ID}-network"
 if docker network inspect "$NETWORK" >/dev/null 2>&1; then
     if docker network rm "$NETWORK" 2>&1; then
@@ -141,50 +147,51 @@ fi
 
 echo ""
 
-# Remove frontend worktree if it exists
-if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
-    FRONTEND_WORKTREE_DIR="$REPO_ROOT/worktrees/frontend/thread-$THREAD_ID"
-    if [[ -d "$FRONTEND_WORKTREE_DIR" ]]; then
-        echo "Removing frontend worktree..."
-        cd "$SEER_FRONTEND_PATH"
-        if git worktree remove "$FRONTEND_WORKTREE_DIR" 2>&1; then
-            echo "✓ Frontend worktree removed"
-        else
-            echo "Warning: Failed to remove frontend worktree normally, trying force..." >&2
-            if git worktree remove --force "$FRONTEND_WORKTREE_DIR" 2>&1; then
-                echo "✓ Frontend worktree force removed"
-            else
-                echo "Warning: Failed to remove frontend worktree: $FRONTEND_WORKTREE_DIR" >&2
-            fi
-        fi
-        # Cleanup directory if it still exists
-        rm -rf "$FRONTEND_WORKTREE_DIR" 2>/dev/null || true
-        # Prune frontend worktrees
-        git worktree prune 2>/dev/null || true
-        cd "$SEER_REPO_PATH"
-    fi
-    echo ""
-fi
-
-# Remove worktree
-if [[ -d "$wt_path" ]]; then
-    echo "Removing worktree..."
-    if git worktree remove "$wt_path" 2>&1; then
-        echo "✓ Worktree removed"
+# Remove backend worktree
+if [[ -d "$BACKEND_WORKTREE" ]]; then
+    echo "Removing backend worktree..."
+    cd "$SEER_REPO_PATH"
+    if git worktree remove "$BACKEND_WORKTREE" 2>&1; then
+        echo "✓ Backend worktree removed"
     else
-        echo "Warning: Failed to remove worktree normally, trying force..." >&2
-        if git worktree remove --force "$wt_path" 2>&1; then
-            echo "✓ Worktree force removed"
+        echo "Warning: Failed to remove backend worktree normally, trying force..." >&2
+        if git worktree remove --force "$BACKEND_WORKTREE" 2>&1; then
+            echo "✓ Backend worktree force removed"
         else
-            echo "Error: Failed to remove worktree: $wt_path" >&2
+            echo "Warning: Failed to remove backend worktree: $BACKEND_WORKTREE" >&2
         fi
     fi
-else
-    echo "Warning: Worktree directory not found: $wt_path" >&2
+    git worktree prune 2>/dev/null || true
 fi
 
-# Prune worktrees
-git worktree prune 2>/dev/null || true
+echo ""
+
+# Remove frontend worktree
+if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]] && [[ -d "$FRONTEND_WORKTREE" ]]; then
+    echo "Removing frontend worktree..."
+    cd "$SEER_FRONTEND_PATH"
+    if git worktree remove "$FRONTEND_WORKTREE" 2>&1; then
+        echo "✓ Frontend worktree removed"
+    else
+        echo "Warning: Failed to remove frontend worktree normally, trying force..." >&2
+        if git worktree remove --force "$FRONTEND_WORKTREE" 2>&1; then
+            echo "✓ Frontend worktree force removed"
+        else
+            echo "Warning: Failed to remove frontend worktree: $FRONTEND_WORKTREE" >&2
+        fi
+    fi
+    git worktree prune 2>/dev/null || true
+    cd "$REPO_ROOT"
+fi
+
+echo ""
+
+# Remove parent directory (includes .devcontainer and any remaining files)
+if [[ -d "$THREAD_PARENT_DIR" ]]; then
+    echo "Removing thread parent directory..."
+    rm -rf "$THREAD_PARENT_DIR"
+    echo "✓ Thread directory removed: $THREAD_PARENT_DIR"
+fi
 
 echo ""
 
@@ -198,12 +205,13 @@ echo "=========================================="
 echo "Thread $THREAD_ID cleanup complete!"
 echo "=========================================="
 echo ""
-echo "Branch '$branch' has been preserved."
+echo "Branch '$branch' has been preserved in both repos."
 echo "You can still create a PR from this branch if needed:"
 echo "  git push origin $branch"
 echo "  gh pr create --base dev"
 echo ""
-echo "To delete the branch:"
-echo "  git branch -D $branch"
+echo "To delete the branch from both repos:"
+echo "  cd $SEER_REPO_PATH && git branch -D $branch"
+echo "  cd $SEER_FRONTEND_PATH && git branch -D $branch"
 echo "  git push origin --delete $branch"
 echo "=========================================="

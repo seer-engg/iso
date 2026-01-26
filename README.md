@@ -1,6 +1,6 @@
 # iso - Isolated Thread Manager
 
-Git worktree-based parallel development for running multiple isolated Claude Code threads simultaneously.
+VS Code devcontainer-based parallel development for running multiple isolated Claude Code threads simultaneously with full-stack context.
 
 ## Problem
 
@@ -9,34 +9,35 @@ Running multiple Claude Code threads on the same repository causes conflicts:
 - Docker port collisions (5432, 6379, 8000)
 - Shared database volumes corrupt state
 - No independent verification
+- Frontend and backend in separate contexts
 
 ## Solution
 
-Each thread gets isolated:
-- **Git worktree** - Separate working directory
-- **Docker environment** - Unique Postgres, Redis, API ports
-- **Thread registry** - Track all active threads
+Each thread gets isolated with unified full-stack context:
+- **Unified devcontainer** - Backend + frontend in single VS Code workspace
+- **Git worktrees** - Separate working directories for both repos
+- **Docker isolation** - Unique Postgres, Redis, network per thread
+- **Auto-install dependencies** - `uv sync`, `aerich upgrade`, `bun install` run automatically
+- **Claude Code full-stack context** - Edit backend API while viewing frontend components
+- **Claude Code pre-installed** - CLI and VS Code extension included
 
 ## Quick Start
 
 ### One-Time Setup
 
 ```bash
-# 1. Configure repo path
+# 1. Configure repo paths (both required for devcontainer approach)
 cp config.example config
 nano config
 # Set: SEER_REPO_PATH=/Users/pika/Projects/seer
+# Set: SEER_FRONTEND_PATH=/Users/pika/Projects/seer-frontend
 
-# 2. (Optional) Configure frontend integration
-# Add to config: SEER_FRONTEND_PATH=/Users/pika/Projects/seer-frontend
-# This creates frontend worktrees automatically
+# 2. Install VS Code Dev Containers extension
+code --install-extension ms-vscode-remote.remote-containers
 
 # 3. Add to PATH
 echo 'export PATH="/Users/pika/Projects/iso:$PATH"' >> ~/.zshrc
 source ~/.zshrc
-
-# 4. (Optional) Install MCP server for Claude Desktop/Cursor
-./install-mcp.sh
 ```
 
 ### Daily Workflow
@@ -44,17 +45,24 @@ source ~/.zshrc
 ```bash
 # Start new thread
 iso init "add-auth-feature" dev
-cd /Users/pika/Projects/iso/worktrees/backend/thread-1
-# Open Claude Code here
 
-# Check active threads
-iso list
+# Open in VS Code
+code /Users/pika/Projects/iso/worktrees/thread-1
 
-# When done, create PR
-git push origin thread-1-add-auth-feature
-gh pr create --base dev
+# Click "Reopen in Container" when prompted
+# Wait for devcontainer to build + auto-install dependencies (first time ~3-5 min)
 
-# Cleanup resources
+# Dependencies are pre-installed - start services immediately:
+cd /workspace/backend
+uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# In another terminal:
+cd /workspace/frontend
+bun dev --port 5173
+
+# Claude Code now sees both backend/ and frontend/ in same session
+
+# When done, cleanup
 iso cleanup 1
 ```
 
@@ -62,7 +70,7 @@ iso cleanup 1
 
 ### iso init
 
-Initialize a new isolated thread.
+Initialize a new isolated thread with unified devcontainer.
 
 ```bash
 iso init <feature-name> [base-branch]
@@ -74,12 +82,14 @@ iso init "fix-workflow-bug" main
 
 **What it does:**
 1. Allocates thread ID and ports
-2. Creates git worktree with new branch
-3. Generates thread-specific docker-compose.yml
-4. Creates .env.thread with unique DATABASE_URL, REDIS_URL
-5. Starts Docker containers (postgres, redis, worker)
-6. Runs database migrations
-7. Shows connection details
+2. Creates unified parent directory: `worktrees/thread-N/`
+3. Creates backend git worktree: `thread-N/backend/`
+4. Creates frontend git worktree: `thread-N/frontend/`
+5. Generates `.devcontainer/` with docker-compose.yml, Dockerfile
+6. Creates .env files with thread-specific config
+7. Prints `code` command to open in VS Code
+
+**Does NOT start Docker** - VS Code handles container lifecycle when you "Reopen in Container"
 
 ### iso list
 
@@ -89,9 +99,9 @@ Display all active threads.
 iso list
 
 # Output:
-# THREAD  BRANCH                 STATUS   BACKEND  FRONTEND  CONTAINERS
-# 1       thread-1-add-auth      active   3001     4001      3 running
-# 2       thread-2-fix-bug       active   3002     4002      3 running
+# THREAD  BRANCH                 STATUS   BACKEND  FRONTEND
+# 1       thread-1-add-auth      ready    3001     4001
+# 2       thread-2-fix-bug       ready    3002     4002
 ```
 
 **Aliases:** `iso ls`
@@ -108,220 +118,192 @@ iso cleanup 1
 ```
 
 **What it does:**
-1. Stops Docker containers
-2. Removes volumes
-3. Removes worktree
-4. Updates registry
-5. Preserves branch for PR history
+1. Stops devcontainer
+2. Removes Docker volumes and network
+3. Removes backend and frontend worktrees
+4. Removes parent directory
+5. Updates registry
+6. Preserves branch for PR history
 
 **Aliases:** `iso clean`, `iso rm`
 
 ## Port Allocation
 
 Simplified sequential port scheme:
-- **Backend API**: 3000 + thread_id (Thread 1 = 3001, Thread 2 = 3002, ...)
-- **Frontend**: 4000 + thread_id (Thread 1 = 4001, Thread 2 = 4002, ...)
+- **Backend API**: 3000 + thread_id (Thread 1 = 3001, Thread 2 = 3002)
+- **Frontend**: 4000 + thread_id (Thread 1 = 4001, Thread 2 = 4002)
 - **Postgres/Redis**: Internal Docker network only (postgres:5432, redis:6379)
 
-Main repo continues using default ports (5432, 6379, 8000).
+Main repo continues using default ports.
 
 ## Directory Structure
 
 ```
 /Users/pika/Projects/
-├── seer/                           # Main repo (unchanged)
-│   └── src/, tests/, etc.          # Source code
-├── seer-frontend/                  # Frontend repo (unchanged)
-│   └── src/, components/, etc.     # Frontend source code
+├── seer/                           # Main backend repo (unchanged)
+├── seer-frontend/                  # Main frontend repo (unchanged)
 └── iso/                            # ISO - manages all isolated threads
-    ├── iso                         # Main CLI (add to PATH)
+    ├── iso                         # Main CLI
     ├── scripts/
-    │   ├── thread-init.sh
-    │   ├── thread-cleanup.sh
+    │   ├── thread-init.sh          # Creates unified worktree + devcontainer
+    │   ├── thread-cleanup.sh       # Cleans up thread resources
     │   ├── thread-list.sh
-    │   └── port-allocator.sh
+    │   ├── port-allocator.sh
+    │   └── devcontainer-init.sh    # Generates .devcontainer/ from templates
     ├── templates/
-    │   └── docker-compose.thread.template.yml
-    ├── mcp-server/                 # MCP server for Claude Desktop
-    │   ├── src/
-    │   ├── dist/
-    │   └── package.json
-    ├── worktrees/                  # All thread worktrees (centralized)
-    │   ├── .thread-registry        # Active threads tracking
-    │   ├── backend/
-    │   │   ├── thread-1/           # Backend worktree for thread 1
-    │   │   │   ├── docker-compose.thread.yml
+    │   └── devcontainer/           # Devcontainer templates
+    │       ├── devcontainer.json
+    │       ├── docker-compose.yml
+    │       ├── Dockerfile          # Python 3.12 + Node 20 + uv + Bun
+    │       └── init-firewall.sh    # Firewall rules
+    ├── worktrees/                  # All thread worktrees (unified structure)
+    │   ├── .thread-registry
+    │   ├── thread-1/               # Unified workspace for thread 1
+    │   │   ├── .devcontainer/      # Generated from templates
+    │   │   │   ├── devcontainer.json
+    │   │   │   ├── docker-compose.yml
+    │   │   │   ├── Dockerfile
+    │   │   │   └── init-firewall.sh
+    │   │   ├── backend/            # Backend git worktree
     │   │   │   ├── .env.thread
-    │   │   │   └── [full repo files]
-    │   │   └── thread-2/
-    │   └── frontend/
-    │       ├── thread-1/           # Frontend worktree for thread 1
-    │       │   ├── .env
-    │       │   └── [full repo files]
-    │       └── thread-2/
+    │   │   │   └── [backend files]
+    │   │   └── frontend/           # Frontend git worktree
+    │   │       ├── .env
+    │   │       └── [frontend files]
+    │   └── thread-2/
     ├── config                      # Your config (gitignored)
     └── config.example
 ```
 
 ## Working in a Thread
 
+### Opening the Thread
+
 ```bash
-# Navigate to thread
-cd /Users/pika/Projects/iso/worktrees/backend/thread-1
+# After iso init, open in VS Code
+code /Users/pika/Projects/iso/worktrees/thread-1
 
-# View logs
-docker compose -f docker-compose.thread.yml logs -f api
+# Click "Reopen in Container"
+# First time: Wait ~3-5 min for:
+#   - Container build (~2 min)
+#   - Dependencies installation via postCreateCommand (~1-2 min)
+# Subsequent times: ~10-30 seconds (dependencies cached)
+```
 
-# Run tests
-uv run pytest -m unit           # SQLite (fast)
-uv run pytest -m integration    # Thread's Postgres (isolated)
+### Inside the Devcontainer
 
-# Test API (use your thread's backend port)
-curl http://localhost:3001/health
+The workspace has both repos mounted:
+- `/workspace/backend/` - Backend code
+- `/workspace/frontend/` - Frontend code
 
-# Commit and push
+```bash
+# Dependencies are pre-installed - start services immediately:
+
+# Start backend API
+cd /workspace/backend
+uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# In another terminal, start frontend
+cd /workspace/frontend
+bun dev --port 5173
+
+# Run backend tests
+cd /workspace/backend
+uv run pytest -m unit
+uv run pytest -m integration
+
+# Use Claude Code CLI
+claude "What files are in /workspace/backend/src?"
+
+# Claude Code sees both codebases
+# Ask: "Read backend/src/api/workflows.py and frontend/src/components/WorkflowCanvas.tsx"
+```
+
+### Making Changes
+
+```bash
+# Commit from backend worktree
+cd /workspace/backend
 git add .
-git commit -m "feat: add authentication"
-git push origin thread-1-add-auth-feature
+git commit -m "feat: add authentication endpoint"
+
+# Commit from frontend worktree
+cd /workspace/frontend
+git add .
+git commit -m "feat: add login form"
+
+# Push both (same branch name)
+cd /workspace/backend && git push origin thread-1-add-auth-feature
+cd /workspace/frontend && git push origin thread-1-add-auth-feature
+
+# Create PR (once, from either repo)
+gh pr create --base dev
 ```
 
-## Frontend Integration
+## Isolation & Security
 
-If `SEER_FRONTEND_PATH` is configured in `config`, ISO automatically:
-- Creates frontend worktree in `~/Projects/iso/worktrees/frontend/thread-N/`
-- Sets `VITE_BACKEND_API_URL=http://localhost:<backend-port>` in worktree .env
-- Sets `VITE_DEV_PORT=<frontend-port>` for isolated frontend dev server
-- Removes frontend worktree when thread is cleaned up
-
-**Starting frontend for a thread:**
-```bash
-cd ~/Projects/iso/worktrees/frontend/thread-1
-bun dev  # Runs on port 4001
-```
-
-**Manual frontend setup** (if not using ISO integration):
-```bash
-# In seer-frontend/.env
-VITE_BACKEND_API_URL=http://localhost:3001  # Use thread's backend port
-```
-
-## Isolation Benefits
+### Thread Isolation
 
 Each thread is completely isolated:
 
 | Resource | Isolation Method |
 |----------|------------------|
-| Files | Separate git worktree (in iso/worktrees/) |
-| Database | Unique Postgres instance on unique port |
-| Cache | Unique Redis instance on unique port |
-| API | Unique port per thread |
-| Docker | Thread-specific container names, volumes, networks |
+| Files | Separate git worktrees (backend + frontend) |
+| Database | Unique Postgres instance with unique volume |
+| Cache | Unique Redis instance with unique volume |
+| Network | Thread-specific Docker network |
+| Ports | Thread-specific ports (3001, 4001, etc.) |
+| Secrets | Thread-specific .env files |
+| Dependencies | Auto-installed via postCreateCommand |
 
-**Result:** No cross-contamination, independent verification, parallel PRs.
+**Result:** No cross-contamination, independent verification, parallel PRs, ready to use immediately.
 
-All thread resources are managed centrally in `~/Projects/iso/worktrees/` for easy cleanup and organization.
+## Claude Code Full-Stack Context
 
-## Migration Guide
+The unified devcontainer gives Claude Code access to both repos in a single session:
 
-### Upgrading from Old Worktree Structure
+**What Claude can see:**
+- Backend: `backend/src/`, `backend/tests/`
+- Frontend: `frontend/src/`, `frontend/components/`
 
-If you previously used ISO and have threads in `$SEER_REPO/.worktrees/`, follow these steps to migrate to the new centralized structure:
+**Example prompts:**
+```
+"Read backend/src/api/workflows.py and frontend/src/components/WorkflowCanvas.tsx - what's the API contract?"
 
-**Option 1: Clean Slate (Recommended)**
+"Add a new endpoint POST /api/workflows/execute in backend, then update the frontend WorkflowCanvas to call it"
 
-```bash
-# 1. Cleanup all existing threads
-iso list
-iso cleanup 1
-iso cleanup 2
-# ... cleanup all threads
-
-# 2. Remove old worktrees directory from seer repo
-rm -rf ~/Projects/seer/.worktrees
-
-# 3. New threads will automatically use new location
-iso init "my-feature" dev
-# Creates: ~/Projects/iso/worktrees/backend/thread-1/
+"The frontend expects {workflow_id, steps[]} but the backend returns {id, actions[]} - fix this mismatch"
 ```
 
-**Option 2: Manual Migration (Keep Active Work)**
+## Devcontainer Details
 
-```bash
-# For each active thread, preserve your changes:
+### First-Time Build
 
-# 1. List threads and note their IDs
-iso list
+The first time you open a thread, VS Code builds the devcontainer:
+- Base image: Python 3.12 (mcr.microsoft.com/devcontainers/python:3.12-bookworm)
+- Installs: Node 20, uv, Bun, git, curl, postgresql-client, redis-tools, Claude Code CLI
+- Starts: postgres, redis containers
+- Runs postCreateCommand: `uv sync`, `aerich upgrade`, `bun install`
 
-# 2. For each thread, commit your work
-cd ~/Projects/seer/.worktrees/thread-1
-git add .
-git commit -m "WIP: preserve thread work"
-git push origin thread-1-my-feature
+**Build time:** ~3-5 minutes (cached after first build)
 
-# 3. Cleanup old thread
-iso cleanup 1
+### Subsequent Opens
 
-# 4. Recreate thread from pushed branch
-cd ~/Projects/seer
-git worktree add ~/Projects/iso/worktrees/backend/thread-1 thread-1-my-feature
+After first build:
+- Reuses cached image + installed dependencies
+- Starts postgres, redis
 
-# 5. Manually update registry (advanced)
-# Or just use: iso init and cherry-pick your commits
-```
+**Startup time:** ~10-20 seconds
 
-**What Changed:**
-- **Before:** Backend worktrees in `$SEER_REPO/.worktrees/thread-N/`
-- **After:** Backend worktrees in `~/Projects/iso/worktrees/backend/thread-N/`
-- **Registry:** Moved from `$SEER_REPO/.worktrees/.thread-registry` to `~/Projects/iso/worktrees/.thread-registry`
-- **Frontend:** Already in `~/Projects/iso/worktrees/frontend/thread-N/` (no change)
+### Customization
 
-## Troubleshooting
+Edit templates before running `iso init`:
+- `templates/devcontainer/devcontainer.json` - VS Code extensions, settings
+- `templates/devcontainer/Dockerfile` - System packages, tools
+- `templates/devcontainer/docker-compose.yml` - Services, ports
+- `templates/devcontainer/init-deps.sh` - Dependency installation
 
-## MCP Integration
-
-ISO can be used from Claude Code CLI, Claude Desktop, Cursor, and other MCP-compatible AI tools.
-
-**Quick start for Claude Code CLI:**
-Add to `.mcp.json` in your project:
-```json
-{
-  "mcpServers": {
-    "iso": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/absolute/path/to/iso/mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-### Installation
-
-```bash
-./install-mcp.sh
-```
-
-Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "iso": {
-      "command": "node",
-      "args": ["/Users/pika/Projects/iso/mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-### Available MCP Tools
-
-- **iso_init_thread**: Create new thread
-- **iso_list_threads**: List all threads with status
-- **iso_get_thread_info**: Get detailed thread info
-- **iso_cleanup_thread**: Clean up thread resources
-
-See [mcp-server/README.md](mcp-server/README.md) for detailed documentation.
+Changes apply to new threads only. Existing threads keep their generated config.
 
 ## Troubleshooting
 
@@ -336,32 +318,31 @@ iso cleanup 1
 iso init "feature-name" dev
 ```
 
-### Docker issues
+### Devcontainer won't start
 
 ```bash
-# View thread logs
-cd ~/Projects/iso/worktrees/backend/thread-1
-docker compose -f docker-compose.thread.yml logs
+# View logs in VS Code terminal or:
+cd ~/Projects/iso/worktrees/thread-1/.devcontainer
+docker compose logs
 
-# Rebuild containers
-docker compose -f docker-compose.thread.yml up -d --build
+# Rebuild devcontainer
+# In VS Code: Cmd+Shift+P → "Dev Containers: Rebuild Container"
 
-# Full reset
-docker compose -f docker-compose.thread.yml down -v
-docker compose -f docker-compose.thread.yml up -d
+# Or manually:
+docker compose down -v
+docker compose up -d --build
 ```
 
 ### Worktree corrupted
 
 ```bash
-# Remove and recreate (backend)
+# Remove and recreate
 cd /Users/pika/Projects/seer
-git worktree remove --force /Users/pika/Projects/iso/worktrees/backend/thread-1
+git worktree remove --force /Users/pika/Projects/iso/worktrees/thread-1/backend
 git worktree prune
 
-# Remove frontend (if exists)
 cd /Users/pika/Projects/seer-frontend
-git worktree remove --force /Users/pika/Projects/iso/worktrees/frontend/thread-1
+git worktree remove --force /Users/pika/Projects/iso/worktrees/thread-1/frontend
 git worktree prune
 
 # Recreate thread
@@ -377,21 +358,41 @@ cat ~/Projects/iso/worktrees/.thread-registry
 # Format: thread_id|branch|backend_port|frontend_port|worktree_path|created_at|status
 ```
 
+## Migration from Old ISO
+
+### If you used ISO before devcontainer approach:
+
+**Clean slate (recommended):**
+
+```bash
+# 1. Cleanup all existing threads
+iso list
+iso cleanup 1
+iso cleanup 2
+# ... cleanup all
+
+# 2. New threads will use devcontainer approach
+iso init "my-feature" dev
+# Opens: code ~/Projects/iso/worktrees/thread-1
+```
+
+**No backward compatibility:** Old threads used `worktrees/backend/thread-N/` with `docker-compose.thread.yml`. New threads use `worktrees/thread-N/` with `.devcontainer/`. They're incompatible.
+
 ## Resource Requirements
 
 For 5 threads (recommended max):
-- **Disk**: ~1.25GB (250MB per thread)
-- **Memory**: ~2.5GB (500MB per thread)
-- **CPU**: ~1 core per thread during builds/tests
+- **Disk**: ~10GB (2GB per devcontainer image + worktrees)
+- **Memory**: ~8GB (1.5GB per devcontainer)
+- **CPU**: ~1 core per thread during builds
 
-**Recommended specs**: 16GB RAM, 8+ cores, 20GB free disk
+**Recommended specs**: 16GB RAM, 8+ cores, 50GB free disk
 
 ## CI/CD Integration
 
 Works seamlessly with existing GitHub Actions:
-1. Each thread creates a normal git branch
-2. Push branch to origin
-3. Create PR from branch
+1. Each thread creates normal git branches (backend + frontend)
+2. Push branches to origin
+3. Create PR from branches
 4. CI runs on PR as usual
 5. Merge when ready
 
@@ -406,49 +407,58 @@ No changes needed to CI configuration.
 iso init "hotfix-auth" main
 ```
 
-### Multiple seer repos
+### Manual devcontainer rebuild
 
 ```bash
-# In config file:
-SEER_REPO_PATH="/Users/pika/Projects/seer"
-SEER_REPO_PATH_2="/Users/pika/Projects/seer-fork"
+# In VS Code: Cmd+Shift+P → "Dev Containers: Rebuild Container"
 
-# Use with environment variable:
-SEER_REPO_PATH="/Users/pika/Projects/seer-fork" iso init "test" dev
+# Or from terminal (outside devcontainer):
+cd ~/Projects/iso/worktrees/thread-1/.devcontainer
+docker compose down -v
+docker compose up -d --build
 ```
 
 ### Check thread health
 
 ```bash
-# Thread containers running?
+# Devcontainer running?
 docker ps | grep seer-thread-1
 
-# Thread database accessible? (only from within Docker containers)
+# Database accessible?
 docker exec seer-thread-1-postgres psql -U postgres -c "SELECT 1"
 
-# Thread API responding?
+# API responding?
 curl http://localhost:3001/health
 ```
 
 ## FAQ
 
-**Q: Does this change my main seer repo?**
-A: No. The main repo at `/Users/pika/Projects/seer` remains completely untouched. All worktrees are created in `~/Projects/iso/worktrees/`.
+**Q: Does this change my main seer/seer-frontend repos?**
+A: No. Main repos remain completely untouched. All worktrees are in `~/Projects/iso/worktrees/`.
 
-**Q: Can I use my main repo normally while threads are running?**
-A: Yes. Main repo's docker-compose.yml uses default ports (5432, 6379, 8000), which don't conflict with thread ports (3001+, 4001+).
+**Q: Can I use my main repos normally while threads are running?**
+A: Yes. No port conflicts (main uses 5432/6379/8000, threads use 3001+/4001+).
 
 **Q: What happens if I forget to cleanup threads?**
-A: No problem. Use `iso list` to see all active threads, cleanup anytime with `iso cleanup N`.
+A: No problem. Use `iso list` to see all threads, cleanup anytime with `iso cleanup N`.
 
 **Q: Do threads share git objects?**
-A: Yes. Worktrees share the same `.git` directory from the main repo, so they're space-efficient (only ~50MB per worktree).
+A: Yes. Worktrees share `.git` from main repo, so they're space-efficient.
 
 **Q: Can I create PRs from thread branches?**
-A: Yes. Each thread is a real git branch. Push and create PRs normally.
+A: Yes. Each thread creates real git branches in both repos. Push and PR normally.
 
 **Q: Do pre-commit hooks run in threads?**
 A: Yes. Worktrees share `.git/hooks`.
+
+**Q: Does this require VS Code?**
+A: Yes. Devcontainer approach is designed for VS Code. Alternatively, use `devcontainer` CLI.
+
+**Q: Can I use Cursor instead of VS Code?**
+A: Yes, if Cursor supports Dev Containers extension (check compatibility).
+
+**Q: Why unified devcontainer instead of separate backend/frontend containers?**
+A: Claude Code gets full-stack context. Edit backend API while viewing frontend types/components in same session. 90% of features touch both codebases.
 
 ## License
 

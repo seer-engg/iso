@@ -1,0 +1,68 @@
+services:
+  app:
+    container_name: seer-thread-{{THREAD_ID}}-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../backend:/workspace/backend
+      - ../frontend:/workspace/frontend
+    env_file:
+      - ../backend/.env.thread
+      - ../frontend/.env
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/seer"
+      REDIS_URL: "redis://redis:6379/0"
+      UV_LINK_MODE: "copy"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+    ports:
+      - "{{BACKEND_PORT}}:8000"
+      - "{{FRONTEND_PORT}}:5173"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    command: sleep infinity
+
+  postgres:
+    container_name: seer-thread-{{THREAD_ID}}-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: seer
+    volumes:
+      - seer-thread-{{THREAD_ID}}-postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d seer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+
+  redis:
+    container_name: seer-thread-{{THREAD_ID}}-redis
+    image: redis:7-alpine
+    volumes:
+      - seer-thread-{{THREAD_ID}}-redis_data:/var/lib/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - seer-thread-{{THREAD_ID}}-network
+
+volumes:
+  seer-thread-{{THREAD_ID}}-postgres_data:
+  seer-thread-{{THREAD_ID}}-redis_data:
+
+networks:
+  seer-thread-{{THREAD_ID}}-network:
+    driver: bridge

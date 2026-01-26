@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Initialize a new seer thread with isolated environment
+# Initialize a new seer thread with devcontainer isolation
+# Creates unified worktree structure with backend + frontend in single devcontainer
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -37,16 +38,27 @@ fi
 FEATURE_NAME="$1"
 BASE_BRANCH="${2:-dev}"
 
-# Change to seer repo
+# Validate base branch exists in backend repo
 cd "$SEER_REPO_PATH"
-
-# Verify base branch exists
 if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-    echo "Error: Base branch '$BASE_BRANCH' does not exist" >&2
+    echo "Error: Base branch '$BASE_BRANCH' does not exist in backend repo" >&2
     exit 1
 fi
 
-# Sanitize feature name (replace spaces/special chars with dashes)
+# Validate frontend repo and base branch
+if [[ -z "${SEER_FRONTEND_PATH:-}" ]] || [[ ! -d "$SEER_FRONTEND_PATH" ]]; then
+    echo "Error: SEER_FRONTEND_PATH not set or does not exist: ${SEER_FRONTEND_PATH:-}" >&2
+    echo "Devcontainer approach requires both backend and frontend repos" >&2
+    exit 1
+fi
+
+cd "$SEER_FRONTEND_PATH"
+if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+    echo "Error: Base branch '$BASE_BRANCH' does not exist in frontend repo" >&2
+    exit 1
+fi
+
+# Sanitize feature name
 FEATURE_SLUG=$(echo "$FEATURE_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
 
 echo "Initializing thread for feature: $FEATURE_NAME"
@@ -63,52 +75,53 @@ if [[ $? -ne 0 ]]; then
 fi
 
 # Parse allocation result
-IFS='|' read -r THREAD_ID BACKEND_PORT FRONTEND_PORT WORKTREE_PATH <<< "$ALLOCATION"
+IFS='|' read -r THREAD_ID BACKEND_PORT FRONTEND_PORT OLD_WORKTREE_PATH <<< "$ALLOCATION"
 
 BRANCH_NAME="thread-$THREAD_ID-$FEATURE_SLUG"
-THREAD_DIR="$REPO_ROOT/worktrees/backend/thread-$THREAD_ID"
+THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
+BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
+FRONTEND_WORKTREE="$THREAD_PARENT_DIR/frontend"
 
 echo "✓ Thread $THREAD_ID allocated"
 echo "  Backend:  localhost:$BACKEND_PORT"
 echo "  Frontend: localhost:$FRONTEND_PORT"
 echo ""
 
-# Create git worktree
-echo "Creating git worktree..."
-if ! git worktree add "$THREAD_DIR" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
-    echo "Error: Failed to create worktree" >&2
+# Create parent directory
+mkdir -p "$THREAD_PARENT_DIR"
+
+# Create backend git worktree
+echo "Creating backend worktree..."
+cd "$SEER_REPO_PATH"
+if ! git worktree add "$BACKEND_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
+    echo "Error: Failed to create backend worktree" >&2
     "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
+    rm -rf "$THREAD_PARENT_DIR"
     exit 1
 fi
-
-echo "✓ Worktree created at $THREAD_DIR"
+echo "✓ Backend worktree: $BACKEND_WORKTREE"
 echo "✓ Branch: $BRANCH_NAME"
 echo ""
 
-# Generate docker-compose.yml from template
-echo "Generating docker-compose.yml..."
-TEMPLATE_FILE="$REPO_ROOT/templates/docker-compose.thread.template.yml"
-
-if [[ ! -f "$TEMPLATE_FILE" ]]; then
-    echo "Error: Template file not found: $TEMPLATE_FILE" >&2
-    git worktree remove --force "$THREAD_DIR"
+# Create frontend git worktree
+echo "Creating frontend worktree..."
+cd "$SEER_FRONTEND_PATH"
+if ! git worktree add "$FRONTEND_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
+    echo "Error: Failed to create frontend worktree" >&2
+    cd "$SEER_REPO_PATH"
+    git worktree remove --force "$BACKEND_WORKTREE"
     "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
+    rm -rf "$THREAD_PARENT_DIR"
     exit 1
 fi
-
-# Substitute template variables
-sed -e "s|{{THREAD_ID}}|$THREAD_ID|g" \
-    -e "s|{{BACKEND_PORT}}|$BACKEND_PORT|g" \
-    -e "s|{{THREAD_DIR}}|$THREAD_DIR|g" \
-    "$TEMPLATE_FILE" > "$THREAD_DIR/docker-compose.thread.yml"
-
-echo "✓ docker-compose.thread.yml generated"
+echo "✓ Frontend worktree: $FRONTEND_WORKTREE"
+echo "✓ Branch: $BRANCH_NAME"
 echo ""
 
-# Create .env.thread
-echo "Creating .env.thread..."
-cat > "$THREAD_DIR/.env.thread" <<EOF
-# Thread $THREAD_ID environment configuration
+# Create backend .env.thread
+echo "Creating backend .env.thread..."
+cat > "$BACKEND_WORKTREE/.env.thread" <<EOF
+# Thread $THREAD_ID backend environment configuration
 # Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 THREAD_ID=$THREAD_ID
@@ -118,129 +131,53 @@ REDIS_URL=redis://redis:6379/0
 BACKEND_PORT=$BACKEND_PORT
 EOF
 
-# Copy secrets from main .env if it exists
+# Copy secrets from main backend .env if it exists
 if [[ -f "$SEER_REPO_PATH/.env" ]]; then
-    echo "" >> "$THREAD_DIR/.env.thread"
-    echo "# Inherited from main .env" >> "$THREAD_DIR/.env.thread"
-    grep -E '^(OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|SENTRY_DSN)=' "$SEER_REPO_PATH/.env" >> "$THREAD_DIR/.env.thread" 2>/dev/null || true
+    echo "" >> "$BACKEND_WORKTREE/.env.thread"
+    echo "# Inherited from main .env" >> "$BACKEND_WORKTREE/.env.thread"
+    grep -E '^(OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|SENTRY_DSN)=' "$SEER_REPO_PATH/.env" >> "$BACKEND_WORKTREE/.env.thread" 2>/dev/null || true
 fi
-
-echo "✓ .env.thread created"
+echo "✓ Backend .env.thread created"
 echo ""
 
-# Setup frontend worktree if frontend path configured
-if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
-    echo "Setting up frontend worktree..."
+# Create frontend .env
+echo "Creating frontend .env..."
+# Copy from main frontend .env if it exists
+if [[ -f "$SEER_FRONTEND_PATH/.env" ]]; then
+    cp "$SEER_FRONTEND_PATH/.env" "$FRONTEND_WORKTREE/.env"
+else
+    touch "$FRONTEND_WORKTREE/.env"
+fi
 
-    FRONTEND_WORKTREE_ROOT="$REPO_ROOT/worktrees/frontend"
-    FRONTEND_WORKTREE_DIR="$FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
+# Append thread-specific overrides
+cat >> "$FRONTEND_WORKTREE/.env" <<ENVEOF
 
-    mkdir -p "$FRONTEND_WORKTREE_ROOT"
-
-    # Create frontend worktree using same branch
-    cd "$SEER_FRONTEND_PATH"
-    if ! git worktree add "$FRONTEND_WORKTREE_DIR" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
-        echo "Error: Failed to create frontend worktree" >&2
-        cd "$SEER_REPO_PATH"
-        git worktree remove --force "$THREAD_DIR"
-        "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-        exit 1
-    fi
-
-    # Copy .env from main frontend
-    if [[ -f "$SEER_FRONTEND_PATH/.env" ]]; then
-        cp "$SEER_FRONTEND_PATH/.env" "$FRONTEND_WORKTREE_DIR/.env"
-    fi
-
-    # Append thread-specific overrides
-    cat >> "$FRONTEND_WORKTREE_DIR/.env" <<ENVEOF
-
-# Thread $THREAD_ID overrides
+# Thread $THREAD_ID frontend overrides
+# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 THREAD_ID=$THREAD_ID
 VITE_DEV_PORT=$FRONTEND_PORT
 VITE_BACKEND_API_URL=http://localhost:$BACKEND_PORT
 ENVEOF
 
-    # Install dependencies
-    cd "$FRONTEND_WORKTREE_DIR"
-    if command -v bun >/dev/null 2>&1; then
-        if bun install 2>&1; then
-            echo "✓ Frontend dependencies installed"
-        else
-            echo "Warning: bun install failed" >&2
-        fi
-    else
-        echo "Warning: bun not found, skipping frontend dependency installation" >&2
-    fi
+echo "✓ Frontend .env created"
+echo ""
 
-    echo "✓ Frontend worktree: $FRONTEND_WORKTREE_DIR"
-    echo "✓ Branch: $BRANCH_NAME"
-    echo ""
-fi
-
-# Start Docker containers
-echo "Starting Docker containers..."
-cd "$THREAD_DIR"
-
-if ! docker compose -f docker-compose.thread.yml up -d 2>&1; then
-    echo "Error: Failed to start containers" >&2
+# Generate devcontainer configuration
+echo "Generating devcontainer configuration..."
+if ! "$SCRIPT_DIR/devcontainer-init.sh" "$THREAD_PARENT_DIR" "$THREAD_ID" "$BACKEND_PORT" "$FRONTEND_PORT"; then
+    echo "Error: Failed to generate devcontainer configuration" >&2
     cd "$SEER_REPO_PATH"
-    git worktree remove --force "$THREAD_DIR"
+    git worktree remove --force "$BACKEND_WORKTREE"
+    cd "$SEER_FRONTEND_PATH"
+    git worktree remove --force "$FRONTEND_WORKTREE"
     "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
+    rm -rf "$THREAD_PARENT_DIR"
     exit 1
 fi
-
-echo "✓ Containers started"
-echo ""
-
-# Wait for services to be healthy
-echo "Waiting for services to be ready..."
-
-# Wait for Postgres
-MAX_WAIT=30
-for ((i=1; i<=MAX_WAIT; i++)); do
-    if docker exec "seer-thread-$THREAD_ID-postgres" pg_isready -U postgres >/dev/null 2>&1; then
-        echo "✓ Postgres ready"
-        break
-    fi
-    if [[ $i -eq $MAX_WAIT ]]; then
-        echo "Warning: Postgres not ready after ${MAX_WAIT}s, continuing anyway..." >&2
-    fi
-    sleep 1
-done
-
-# Wait for Redis
-for ((i=1; i<=MAX_WAIT; i++)); do
-    if docker exec "seer-thread-$THREAD_ID-redis" redis-cli ping >/dev/null 2>&1; then
-        echo "✓ Redis ready"
-        break
-    fi
-    if [[ $i -eq $MAX_WAIT ]]; then
-        echo "Warning: Redis not ready after ${MAX_WAIT}s, continuing anyway..." >&2
-    fi
-    sleep 1
-done
-
-echo ""
-
-# Run database migrations
-echo "Running database migrations..."
-export DATABASE_URL="postgresql://postgres:postgres@postgres:5432/seer"
-
-if command -v uv >/dev/null 2>&1; then
-    if uv run aerich upgrade 2>&1; then
-        echo "✓ Migrations completed"
-    else
-        echo "Warning: Migrations failed, you may need to run manually" >&2
-    fi
-else
-    echo "Warning: uv not found, skipping migrations" >&2
-fi
-
 echo ""
 
 # Update thread status
-"$SCRIPT_DIR/port-allocator.sh" update-status "$THREAD_ID" "active"
+"$SCRIPT_DIR/port-allocator.sh" update-status "$THREAD_ID" "ready"
 
 # Output success message
 echo "=========================================="
@@ -248,37 +185,31 @@ echo "Thread $THREAD_ID initialized successfully!"
 echo "=========================================="
 echo ""
 echo "Branch: $BRANCH_NAME"
-echo "Worktree: $THREAD_DIR"
+echo "Workspace: $THREAD_PARENT_DIR"
 echo ""
-echo "Services:"
-echo "  Backend API: http://localhost:$BACKEND_PORT"
-echo "  Postgres:    postgres:5432 (internal only)"
-echo "  Redis:       redis:6379 (internal only)"
+echo "Structure:"
+echo "  $THREAD_PARENT_DIR/"
+echo "    ├── .devcontainer/    # Devcontainer config"
+echo "    ├── backend/          # Backend git worktree"
+echo "    └── frontend/         # Frontend git worktree"
 echo ""
-echo "Frontend Configuration:"
-if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
-    FRONTEND_WORKTREE_ROOT="$REPO_ROOT/worktrees/frontend"
-    echo "  Worktree: $FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
-    echo "  Dev port: $FRONTEND_PORT"
-    echo "  Backend URL: http://localhost:$BACKEND_PORT"
-    echo ""
-    echo "  To start frontend:"
-    echo "    cd $FRONTEND_WORKTREE_ROOT/thread-$THREAD_ID"
-    echo "    bun dev"
-else
-    echo "  ⚠️  Frontend not configured in ISO config"
-    echo "  Manually update frontend .env:"
-    echo "      VITE_BACKEND_API_URL=http://localhost:$BACKEND_PORT"
-fi
+echo "Services (after opening in VS Code):"
+echo "  Backend API:  http://localhost:$BACKEND_PORT"
+echo "  Frontend Dev: http://localhost:$FRONTEND_PORT"
+echo "  Postgres:     postgres:5432 (internal only)"
+echo "  Redis:        redis:6379 (internal only)"
 echo ""
 echo "Next steps:"
-echo "  cd $THREAD_DIR"
-echo "  # Open Claude Code or your editor here"
+echo "  1. Open in VS Code:"
+echo "     code $THREAD_PARENT_DIR"
 echo ""
-echo "Commands:"
-echo "  docker compose -f docker-compose.thread.yml logs -f"
-echo "  uv run pytest"
-echo "  curl http://localhost:$BACKEND_PORT/health"
+echo "  2. Click 'Reopen in Container' when prompted"
+echo ""
+echo "  3. Inside devcontainer, start services:"
+echo "     cd /workspace/backend && uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload"
+echo "     cd /workspace/frontend && bun dev --port 5173"
+echo ""
+echo "  4. Claude Code will have full-stack context (backend + frontend)"
 echo ""
 echo "When done:"
 echo "  git push origin $BRANCH_NAME"
