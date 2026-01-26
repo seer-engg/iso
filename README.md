@@ -376,8 +376,6 @@ iso init "my-feature" dev
 # Opens: code ~/Projects/iso/worktrees/thread-1
 ```
 
-**No backward compatibility:** Old threads used `worktrees/backend/thread-N/` with `docker-compose.thread.yml`. New threads use `worktrees/thread-N/` with `.devcontainer/`. They're incompatible.
-
 ## Resource Requirements
 
 For 5 threads (recommended max):
