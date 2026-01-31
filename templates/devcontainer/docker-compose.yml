@@ -12,7 +12,6 @@ services:
     env_file:
       - ../backend/.env.thread
       - ../frontend/.env
-      - ../sales-cx/.env
       - ../website/.env
     environment:
       DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/seer"
