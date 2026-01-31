@@ -155,20 +155,14 @@ if [[ -d "$BACKEND_WORKTREE" ]]; then
     echo "Removing backend worktree..."
     cd "$SEER_REPO_PATH"
 
-    # Pre-clean worktree to eliminate warnings
-    if [[ -d "$BACKEND_WORKTREE/.git" ]]; then
-        git -C "$BACKEND_WORKTREE" clean -fdx 2>/dev/null || true
-        git -C "$BACKEND_WORKTREE" reset --hard 2>/dev/null || true
-    fi
-
-    # Now remove cleanly (should succeed without force)
-    if git worktree remove "$BACKEND_WORKTREE" 2>&1; then
+    # Force remove worktree (ignore modified/untracked files)
+    if git worktree remove --force "$BACKEND_WORKTREE" 2>&1; then
         echo "✓ Backend worktree removed"
     else
-        # Fallback: direct filesystem removal
+        # Fallback: direct filesystem removal + prune
         rm -rf "$BACKEND_WORKTREE"
         git worktree prune 2>/dev/null || true
-        echo "✓ Backend worktree removed (filesystem fallback)"
+        echo "✓ Backend worktree removed (fallback)"
     fi
 fi
 
@@ -179,20 +173,14 @@ if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]] && [[ -d
     echo "Removing frontend worktree..."
     cd "$SEER_FRONTEND_PATH"
 
-    # Pre-clean worktree to eliminate warnings
-    if [[ -d "$FRONTEND_WORKTREE/.git" ]]; then
-        git -C "$FRONTEND_WORKTREE" clean -fdx 2>/dev/null || true
-        git -C "$FRONTEND_WORKTREE" reset --hard 2>/dev/null || true
-    fi
-
-    # Now remove cleanly (should succeed without force)
-    if git worktree remove "$FRONTEND_WORKTREE" 2>&1; then
+    # Force remove worktree (ignore modified/untracked files)
+    if git worktree remove --force "$FRONTEND_WORKTREE" 2>&1; then
         echo "✓ Frontend worktree removed"
     else
-        # Fallback: direct filesystem removal
+        # Fallback: direct filesystem removal + prune
         rm -rf "$FRONTEND_WORKTREE"
         git worktree prune 2>/dev/null || true
-        echo "✓ Frontend worktree removed (filesystem fallback)"
+        echo "✓ Frontend worktree removed (fallback)"
     fi
     cd "$REPO_ROOT"
 fi
@@ -204,20 +192,14 @@ if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]] && [[ -d
     echo "Removing sales-cx worktree..."
     cd "$SALES_CX_REPO_PATH"
 
-    # Pre-clean worktree to eliminate warnings
-    if [[ -d "$SALES_CX_WORKTREE/.git" ]]; then
-        git -C "$SALES_CX_WORKTREE" clean -fdx 2>/dev/null || true
-        git -C "$SALES_CX_WORKTREE" reset --hard 2>/dev/null || true
-    fi
-
-    # Now remove cleanly (should succeed without force)
-    if git worktree remove "$SALES_CX_WORKTREE" 2>&1; then
+    # Force remove worktree (ignore modified/untracked files)
+    if git worktree remove --force "$SALES_CX_WORKTREE" 2>&1; then
         echo "✓ Sales-CX worktree removed"
     else
-        # Fallback: direct filesystem removal
+        # Fallback: direct filesystem removal + prune
         rm -rf "$SALES_CX_WORKTREE"
         git worktree prune 2>/dev/null || true
-        echo "✓ Sales-CX worktree removed (filesystem fallback)"
+        echo "✓ Sales-CX worktree removed (fallback)"
     fi
     cd "$REPO_ROOT"
 fi
@@ -229,23 +211,93 @@ if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "
     echo "Removing seer-website worktree..."
     cd "$SEER_WEBSITE_PATH"
 
-    # Pre-clean worktree to eliminate warnings
-    if [[ -d "$WEBSITE_WORKTREE/.git" ]]; then
-        git -C "$WEBSITE_WORKTREE" clean -fdx 2>/dev/null || true
-        git -C "$WEBSITE_WORKTREE" reset --hard 2>/dev/null || true
-    fi
-
-    # Now remove cleanly (should succeed without force)
-    if git worktree remove "$WEBSITE_WORKTREE" 2>&1; then
+    # Force remove worktree (ignore modified/untracked files)
+    if git worktree remove --force "$WEBSITE_WORKTREE" 2>&1; then
         echo "✓ Seer-website worktree removed"
     else
-        # Fallback: direct filesystem removal
+        # Fallback: direct filesystem removal + prune
         rm -rf "$WEBSITE_WORKTREE"
         git worktree prune 2>/dev/null || true
-        echo "✓ Seer-website worktree removed (filesystem fallback)"
+        echo "✓ Seer-website worktree removed (fallback)"
     fi
     cd "$REPO_ROOT"
 fi
+
+echo ""
+
+# Delete branches from all repos
+echo "Deleting branch '$branch' from all repos..."
+
+# Track deletion status
+BRANCH_DELETED=false
+
+# Delete from backend repo
+if [[ -d "$SEER_REPO_PATH" ]]; then
+    cd "$SEER_REPO_PATH"
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        if git branch -D "$branch" 2>&1; then
+            echo "✓ Branch deleted from backend: $branch"
+            BRANCH_DELETED=true
+        else
+            echo "Warning: Failed to delete branch from backend" >&2
+        fi
+    fi
+fi
+
+# Delete from frontend repo
+if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
+    cd "$SEER_FRONTEND_PATH"
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        if git branch -D "$branch" 2>&1; then
+            echo "✓ Branch deleted from frontend: $branch"
+        else
+            echo "Warning: Failed to delete branch from frontend" >&2
+        fi
+    fi
+fi
+
+# Delete from sales-cx repo (optional)
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    cd "$SALES_CX_REPO_PATH"
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        if git branch -D "$branch" 2>&1; then
+            echo "✓ Branch deleted from sales-cx: $branch"
+        else
+            echo "Warning: Failed to delete branch from sales-cx" >&2
+        fi
+    fi
+fi
+
+# Delete from seer-website repo (optional)
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
+    cd "$SEER_WEBSITE_PATH"
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        if git branch -D "$branch" 2>&1; then
+            echo "✓ Branch deleted from seer-website: $branch"
+        else
+            echo "Warning: Failed to delete branch from seer-website" >&2
+        fi
+    fi
+fi
+
+cd "$REPO_ROOT"
+
+echo ""
+
+# Delete remote branch if it exists
+echo "Checking for remote branch..."
+cd "$SEER_REPO_PATH"
+if git ls-remote --heads origin "$branch" | grep -q "$branch"; then
+    echo "Deleting remote branch: $branch"
+    if git push origin --delete "$branch" 2>&1; then
+        echo "✓ Remote branch deleted: $branch"
+    else
+        echo "Warning: Failed to delete remote branch (may not exist or no permission)" >&2
+    fi
+else
+    echo "Remote branch does not exist, skipping"
+fi
+cd "$REPO_ROOT"
 
 echo ""
 
@@ -268,19 +320,5 @@ echo "=========================================="
 echo "Thread $THREAD_ID cleanup complete!"
 echo "=========================================="
 echo ""
-echo "Branch '$branch' has been preserved in both repos."
-echo "You can still create a PR from this branch if needed:"
-echo "  git push origin $branch"
-echo "  gh pr create --base dev"
-echo ""
-echo "To delete the branch from all repos:"
-echo "  cd $SEER_REPO_PATH && git branch -D $branch"
-echo "  cd $SEER_FRONTEND_PATH && git branch -D $branch"
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    echo "  cd $SALES_CX_REPO_PATH && git branch -D $branch"
-fi
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
-    echo "  cd $SEER_WEBSITE_PATH && git branch -D $branch"
-fi
-echo "  git push origin --delete $branch"
+echo "All thread resources and branches have been deleted."
 echo "=========================================="
