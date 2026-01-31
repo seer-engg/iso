@@ -108,6 +108,7 @@ if [[ -f "$DEVCONTAINER_COMPOSE" ]]; then
     cd "$THREAD_PARENT_DIR/.devcontainer"
     if docker compose down -v 2>&1; then
         echo "✓ Devcontainer stopped and removed"
+        sleep 0.5  # Brief wait for filesystem locks to release
     else
         echo "Warning: Failed to stop devcontainer, it may not be running" >&2
     fi
@@ -153,17 +154,22 @@ echo ""
 if [[ -d "$BACKEND_WORKTREE" ]]; then
     echo "Removing backend worktree..."
     cd "$SEER_REPO_PATH"
+
+    # Pre-clean worktree to eliminate warnings
+    if [[ -d "$BACKEND_WORKTREE/.git" ]]; then
+        git -C "$BACKEND_WORKTREE" clean -fdx 2>/dev/null || true
+        git -C "$BACKEND_WORKTREE" reset --hard 2>/dev/null || true
+    fi
+
+    # Now remove cleanly (should succeed without force)
     if git worktree remove "$BACKEND_WORKTREE" 2>&1; then
         echo "✓ Backend worktree removed"
     else
-        echo "Warning: Failed to remove backend worktree normally, trying force..." >&2
-        if git worktree remove --force "$BACKEND_WORKTREE" 2>&1; then
-            echo "✓ Backend worktree force removed"
-        else
-            echo "Warning: Failed to remove backend worktree: $BACKEND_WORKTREE" >&2
-        fi
+        # Fallback: direct filesystem removal
+        rm -rf "$BACKEND_WORKTREE"
+        git worktree prune 2>/dev/null || true
+        echo "✓ Backend worktree removed (filesystem fallback)"
     fi
-    git worktree prune 2>/dev/null || true
 fi
 
 echo ""
@@ -172,17 +178,22 @@ echo ""
 if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]] && [[ -d "$FRONTEND_WORKTREE" ]]; then
     echo "Removing frontend worktree..."
     cd "$SEER_FRONTEND_PATH"
+
+    # Pre-clean worktree to eliminate warnings
+    if [[ -d "$FRONTEND_WORKTREE/.git" ]]; then
+        git -C "$FRONTEND_WORKTREE" clean -fdx 2>/dev/null || true
+        git -C "$FRONTEND_WORKTREE" reset --hard 2>/dev/null || true
+    fi
+
+    # Now remove cleanly (should succeed without force)
     if git worktree remove "$FRONTEND_WORKTREE" 2>&1; then
         echo "✓ Frontend worktree removed"
     else
-        echo "Warning: Failed to remove frontend worktree normally, trying force..." >&2
-        if git worktree remove --force "$FRONTEND_WORKTREE" 2>&1; then
-            echo "✓ Frontend worktree force removed"
-        else
-            echo "Warning: Failed to remove frontend worktree: $FRONTEND_WORKTREE" >&2
-        fi
+        # Fallback: direct filesystem removal
+        rm -rf "$FRONTEND_WORKTREE"
+        git worktree prune 2>/dev/null || true
+        echo "✓ Frontend worktree removed (filesystem fallback)"
     fi
-    git worktree prune 2>/dev/null || true
     cd "$REPO_ROOT"
 fi
 
@@ -192,17 +203,22 @@ echo ""
 if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]] && [[ -d "$SALES_CX_WORKTREE" ]]; then
     echo "Removing sales-cx worktree..."
     cd "$SALES_CX_REPO_PATH"
+
+    # Pre-clean worktree to eliminate warnings
+    if [[ -d "$SALES_CX_WORKTREE/.git" ]]; then
+        git -C "$SALES_CX_WORKTREE" clean -fdx 2>/dev/null || true
+        git -C "$SALES_CX_WORKTREE" reset --hard 2>/dev/null || true
+    fi
+
+    # Now remove cleanly (should succeed without force)
     if git worktree remove "$SALES_CX_WORKTREE" 2>&1; then
         echo "✓ Sales-CX worktree removed"
     else
-        echo "Warning: Failed to remove sales-cx worktree normally, trying force..." >&2
-        if git worktree remove --force "$SALES_CX_WORKTREE" 2>&1; then
-            echo "✓ Sales-CX worktree force removed"
-        else
-            echo "Warning: Failed to remove sales-cx worktree: $SALES_CX_WORKTREE" >&2
-        fi
+        # Fallback: direct filesystem removal
+        rm -rf "$SALES_CX_WORKTREE"
+        git worktree prune 2>/dev/null || true
+        echo "✓ Sales-CX worktree removed (filesystem fallback)"
     fi
-    git worktree prune 2>/dev/null || true
     cd "$REPO_ROOT"
 fi
 
@@ -212,17 +228,22 @@ echo ""
 if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
     echo "Removing seer-website worktree..."
     cd "$SEER_WEBSITE_PATH"
+
+    # Pre-clean worktree to eliminate warnings
+    if [[ -d "$WEBSITE_WORKTREE/.git" ]]; then
+        git -C "$WEBSITE_WORKTREE" clean -fdx 2>/dev/null || true
+        git -C "$WEBSITE_WORKTREE" reset --hard 2>/dev/null || true
+    fi
+
+    # Now remove cleanly (should succeed without force)
     if git worktree remove "$WEBSITE_WORKTREE" 2>&1; then
         echo "✓ Seer-website worktree removed"
     else
-        echo "Warning: Failed to remove seer-website worktree normally, trying force..." >&2
-        if git worktree remove --force "$WEBSITE_WORKTREE" 2>&1; then
-            echo "✓ Seer-website worktree force removed"
-        else
-            echo "Warning: Failed to remove seer-website worktree: $WEBSITE_WORKTREE" >&2
-        fi
+        # Fallback: direct filesystem removal
+        rm -rf "$WEBSITE_WORKTREE"
+        git worktree prune 2>/dev/null || true
+        echo "✓ Seer-website worktree removed (filesystem fallback)"
     fi
-    git worktree prune 2>/dev/null || true
     cd "$REPO_ROOT"
 fi
 
