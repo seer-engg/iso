@@ -73,6 +73,8 @@ IFS='|' read -r tid branch backend_port frontend_port wt_path created status <<<
 THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
 BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
 FRONTEND_WORKTREE="$THREAD_PARENT_DIR/frontend"
+SALES_CX_WORKTREE="$THREAD_PARENT_DIR/sales-cx"
+WEBSITE_WORKTREE="$THREAD_PARENT_DIR/website"
 
 # Display thread info
 echo "Thread $THREAD_ID details:"
@@ -186,6 +188,46 @@ fi
 
 echo ""
 
+# Remove sales-cx worktree (optional)
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]] && [[ -d "$SALES_CX_WORKTREE" ]]; then
+    echo "Removing sales-cx worktree..."
+    cd "$SALES_CX_REPO_PATH"
+    if git worktree remove "$SALES_CX_WORKTREE" 2>&1; then
+        echo "✓ Sales-CX worktree removed"
+    else
+        echo "Warning: Failed to remove sales-cx worktree normally, trying force..." >&2
+        if git worktree remove --force "$SALES_CX_WORKTREE" 2>&1; then
+            echo "✓ Sales-CX worktree force removed"
+        else
+            echo "Warning: Failed to remove sales-cx worktree: $SALES_CX_WORKTREE" >&2
+        fi
+    fi
+    git worktree prune 2>/dev/null || true
+    cd "$REPO_ROOT"
+fi
+
+echo ""
+
+# Remove seer-website worktree (optional)
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
+    echo "Removing seer-website worktree..."
+    cd "$SEER_WEBSITE_PATH"
+    if git worktree remove "$WEBSITE_WORKTREE" 2>&1; then
+        echo "✓ Seer-website worktree removed"
+    else
+        echo "Warning: Failed to remove seer-website worktree normally, trying force..." >&2
+        if git worktree remove --force "$WEBSITE_WORKTREE" 2>&1; then
+            echo "✓ Seer-website worktree force removed"
+        else
+            echo "Warning: Failed to remove seer-website worktree: $WEBSITE_WORKTREE" >&2
+        fi
+    fi
+    git worktree prune 2>/dev/null || true
+    cd "$REPO_ROOT"
+fi
+
+echo ""
+
 # Remove parent directory (includes .devcontainer and any remaining files)
 if [[ -d "$THREAD_PARENT_DIR" ]]; then
     echo "Removing thread parent directory..."
@@ -210,8 +252,14 @@ echo "You can still create a PR from this branch if needed:"
 echo "  git push origin $branch"
 echo "  gh pr create --base dev"
 echo ""
-echo "To delete the branch from both repos:"
+echo "To delete the branch from all repos:"
 echo "  cd $SEER_REPO_PATH && git branch -D $branch"
 echo "  cd $SEER_FRONTEND_PATH && git branch -D $branch"
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    echo "  cd $SALES_CX_REPO_PATH && git branch -D $branch"
+fi
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
+    echo "  cd $SEER_WEBSITE_PATH && git branch -D $branch"
+fi
 echo "  git push origin --delete $branch"
 echo "=========================================="

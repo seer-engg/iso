@@ -7,6 +7,12 @@ SEER_REPO_PATH="/Users/pika/Projects/seer"
 # Optional: Frontend repository path (for automatic .env updates)
 # SEER_FRONTEND_PATH="/Users/pika/Projects/seer-frontend"
 
+# Optional: Sales-CX documentation repository path
+# SALES_CX_REPO_PATH="/Users/pika/Projects/sales-cx"
+
+# Optional: Seer-website marketing/product website repository path
+# SEER_WEBSITE_PATH="/Users/pika/Projects/seer-website"
+
 # Optional: Multiple repos (uncomment and add paths as needed)
 # SEER_REPO_PATH_2="/path/to/another/seer/clone"
 

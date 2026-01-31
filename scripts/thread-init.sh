@@ -58,6 +58,24 @@ if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Validate sales-cx repo and base branch (optional)
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    cd "$SALES_CX_REPO_PATH"
+    if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+        echo "Error: Base branch '$BASE_BRANCH' does not exist in sales-cx repo" >&2
+        exit 1
+    fi
+fi
+
+# Validate seer-website repo and base branch (optional)
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
+    cd "$SEER_WEBSITE_PATH"
+    if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+        echo "Error: Base branch '$BASE_BRANCH' does not exist in seer-website repo" >&2
+        exit 1
+    fi
+fi
+
 # Sanitize feature name
 FEATURE_SLUG=$(echo "$FEATURE_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
 
@@ -118,6 +136,50 @@ echo "✓ Frontend worktree: $FRONTEND_WORKTREE"
 echo "✓ Branch: $BRANCH_NAME"
 echo ""
 
+# Create sales-cx git worktree (optional)
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    SALES_CX_WORKTREE="$THREAD_PARENT_DIR/sales-cx"
+    echo "Creating sales-cx worktree..."
+    cd "$SALES_CX_REPO_PATH"
+    if ! git worktree add "$SALES_CX_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
+        echo "Error: Failed to create sales-cx worktree" >&2
+        cd "$SEER_REPO_PATH"
+        git worktree remove --force "$BACKEND_WORKTREE"
+        cd "$SEER_FRONTEND_PATH"
+        git worktree remove --force "$FRONTEND_WORKTREE"
+        "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
+        rm -rf "$THREAD_PARENT_DIR"
+        exit 1
+    fi
+    echo "✓ Sales-CX worktree: $SALES_CX_WORKTREE"
+    echo "✓ Branch: $BRANCH_NAME"
+    echo ""
+fi
+
+# Create seer-website git worktree (optional)
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
+    WEBSITE_WORKTREE="$THREAD_PARENT_DIR/website"
+    echo "Creating seer-website worktree..."
+    cd "$SEER_WEBSITE_PATH"
+    if ! git worktree add "$WEBSITE_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
+        echo "Error: Failed to create seer-website worktree" >&2
+        cd "$SEER_REPO_PATH"
+        git worktree remove --force "$BACKEND_WORKTREE"
+        cd "$SEER_FRONTEND_PATH"
+        git worktree remove --force "$FRONTEND_WORKTREE"
+        if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]] && [[ -d "$SALES_CX_WORKTREE" ]]; then
+            cd "$SALES_CX_REPO_PATH"
+            git worktree remove --force "$SALES_CX_WORKTREE"
+        fi
+        "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
+        rm -rf "$THREAD_PARENT_DIR"
+        exit 1
+    fi
+    echo "✓ Seer-website worktree: $WEBSITE_WORKTREE"
+    echo "✓ Branch: $BRANCH_NAME"
+    echo ""
+fi
+
 # Create backend .env.thread
 echo "Creating backend .env.thread..."
 cat > "$BACKEND_WORKTREE/.env.thread" <<EOF
@@ -162,6 +224,31 @@ ENVEOF
 echo "✓ Frontend .env created"
 echo ""
 
+# Create seer-website .env (optional)
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
+    echo "Creating seer-website .env..."
+
+    # Copy from main website .env if it exists
+    if [[ -f "$SEER_WEBSITE_PATH/.env" ]]; then
+        cp "$SEER_WEBSITE_PATH/.env" "$WEBSITE_WORKTREE/.env"
+    elif [[ -f "$SEER_WEBSITE_PATH/env.example" ]]; then
+        cp "$SEER_WEBSITE_PATH/env.example" "$WEBSITE_WORKTREE/.env"
+    else
+        touch "$WEBSITE_WORKTREE/.env"
+    fi
+
+    # Append thread-specific overrides
+    cat >> "$WEBSITE_WORKTREE/.env" <<ENVEOF
+
+# Thread $THREAD_ID website overrides
+# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+THREAD_ID=$THREAD_ID
+ENVEOF
+
+    echo "✓ Seer-website .env created"
+    echo ""
+fi
+
 # Copy Claude Code configuration templates
 echo "Setting up Claude Code configuration..."
 
@@ -183,6 +270,30 @@ if [[ -d "$BACKEND_CLAUDE_TEMPLATE" ]]; then
     mkdir -p "$BACKEND_CLAUDE_DIR"
     cp -r "$BACKEND_CLAUDE_TEMPLATE/"* "$BACKEND_CLAUDE_DIR/"
     echo "✓ Backend Claude Code config copied"
+fi
+
+# Sales-CX .claude config (optional)
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    SALES_CX_CLAUDE_DIR="$THREAD_PARENT_DIR/sales-cx/.claude"
+    SALES_CX_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/sales-cx"
+
+    if [[ -d "$SALES_CX_CLAUDE_TEMPLATE" ]]; then
+        mkdir -p "$SALES_CX_CLAUDE_DIR"
+        cp -r "$SALES_CX_CLAUDE_TEMPLATE/"* "$SALES_CX_CLAUDE_DIR/"
+        echo "✓ Sales-CX Claude Code config copied"
+    fi
+fi
+
+# Seer-website .claude config (optional)
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
+    WEBSITE_CLAUDE_DIR="$WEBSITE_WORKTREE/.claude"
+    WEBSITE_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/website"
+
+    if [[ -d "$WEBSITE_CLAUDE_TEMPLATE" ]]; then
+        mkdir -p "$WEBSITE_CLAUDE_DIR"
+        cp -r "$WEBSITE_CLAUDE_TEMPLATE/"* "$WEBSITE_CLAUDE_DIR/"
+        echo "✓ Seer-website Claude Code config copied"
+    fi
 fi
 
 echo ""
@@ -216,7 +327,14 @@ echo "Structure:"
 echo "  $THREAD_PARENT_DIR/"
 echo "    ├── .devcontainer/    # Devcontainer config"
 echo "    ├── backend/          # Backend git worktree"
-echo "    └── frontend/         # Frontend git worktree"
+echo "    ├── frontend/         # Frontend git worktree"
+if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    echo "    ├── sales-cx/         # Sales-CX git worktree"
+fi
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
+    echo "    ├── website/          # Seer-website git worktree"
+fi
+echo "    └── ..."
 echo ""
 echo "Services (after opening in VS Code):"
 echo "  Backend API:  http://localhost:$BACKEND_PORT"
@@ -234,7 +352,17 @@ echo "  3. Inside devcontainer, start services:"
 echo "     cd /workspace/backend && uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload"
 echo "     cd /workspace/frontend && bun dev --port 5173"
 echo ""
-echo "  4. Claude Code will have full-stack context (backend + frontend)"
+if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
+    if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+        echo "  4. Claude Code has full-stack context (backend + frontend + website + sales-cx docs)"
+    else
+        echo "  4. Claude Code has full-stack context (backend + frontend + website)"
+    fi
+elif [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
+    echo "  4. Claude Code has full-stack context (backend + frontend + sales-cx docs)"
+else
+    echo "  4. Claude Code has full-stack context (backend + frontend)"
+fi
 echo ""
 echo "When done:"
 echo "  git push origin $BRANCH_NAME"
