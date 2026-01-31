@@ -7,9 +7,13 @@ services:
     volumes:
       - ../backend:/workspace/backend
       - ../frontend:/workspace/frontend
+      - ../sales-cx:/workspace/sales-cx
+      - ../website:/workspace/website
     env_file:
       - ../backend/.env.thread
       - ../frontend/.env
+      - ../sales-cx/.env
+      - ../website/.env
     environment:
       DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/seer"
       REDIS_URL: "redis://redis:6379/0"
