@@ -21,9 +21,8 @@ SEER_REPO_PATH="${SEER_REPO_PATH:-$HOME/seer}"
 SEER_FRONTEND_PATH="${SEER_FRONTEND_PATH:-$HOME/seer-frontend}"
 EOF
 
-# Add to Claude Code settings (idempotent)
-SETTINGS="$HOME/.claude/settings.json"
-mkdir -p "$HOME/.claude"
+# Add to Claude Code user config (idempotent)
+SETTINGS="$HOME/.claude.json"
 if [ ! -f "$SETTINGS" ]; then
     echo '{}' > "$SETTINGS"
 fi
