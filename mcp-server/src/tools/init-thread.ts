@@ -52,14 +52,21 @@ export async function initThread(input: InitThreadInput): Promise<InitThreadResu
       }
 
       // Parse output to extract thread info
-      const threadIdMatch = stdout.match(/Thread (\d+) allocated/);
+      const threadIdMatch = stdout.match(/✓?\s*Thread (\d+) allocated/);
       const backendMatch = stdout.match(/Backend:\s+localhost:(\d+)/);
       const frontendMatch = stdout.match(/Frontend:\s+localhost:(\d+)/);
       const branchMatch = stdout.match(/Branch:\s+(\S+)/);
-      const worktreeMatch = stdout.match(/Worktree:\s+(\S+)/);
+      const worktreeMatch = stdout.match(/Work(?:tree|space):\s+(\S+)/);
 
       if (!threadIdMatch || !backendMatch || !frontendMatch || !branchMatch || !worktreeMatch) {
-        reject(new Error('Failed to parse thread initialization output'));
+        const missing = [
+          !threadIdMatch && 'threadId',
+          !backendMatch && 'backend',
+          !frontendMatch && 'frontend',
+          !branchMatch && 'branch',
+          !worktreeMatch && 'worktree',
+        ].filter(Boolean);
+        reject(new Error(`Failed to parse thread initialization output. Missing: ${missing.join(', ')}. Output:\n${stdout}`));
         return;
       }
 
