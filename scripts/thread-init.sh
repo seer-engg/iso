@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Initialize a new seer thread with devcontainer isolation
-# Creates unified worktree structure with backend + frontend in single devcontainer
+# Initialize a new seer thread with local process isolation
+# Creates unified worktree structure with backend + frontend as local processes
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -48,7 +48,7 @@ fi
 # Validate frontend repo and base branch
 if [[ -z "${SEER_FRONTEND_PATH:-}" ]] || [[ ! -d "$SEER_FRONTEND_PATH" ]]; then
     echo "Error: SEER_FRONTEND_PATH not set or does not exist: ${SEER_FRONTEND_PATH:-}" >&2
-    echo "Devcontainer approach requires both backend and frontend repos" >&2
+    echo "ISO requires both backend and frontend repos" >&2
     exit 1
 fi
 
@@ -180,26 +180,29 @@ if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
     echo ""
 fi
 
-# Create backend .env.thread
-echo "Creating backend .env.thread..."
-cat > "$BACKEND_WORKTREE/.env.thread" <<EOF
-# Thread $THREAD_ID backend environment configuration
-# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+# Create backend .env
+echo "Creating backend .env..."
 
+# Start with main .env if it exists
+if [[ -f "$SEER_REPO_PATH/.env" ]]; then
+    cp "$SEER_REPO_PATH/.env" "$BACKEND_WORKTREE/.env"
+else
+    touch "$BACKEND_WORKTREE/.env"
+fi
+
+# Append thread-specific overrides (localhost, not container hostnames)
+cat >> "$BACKEND_WORKTREE/.env" <<EOF
+
+# Thread $THREAD_ID backend overrides
+# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 THREAD_ID=$THREAD_ID
 THREAD_BRANCH=$BRANCH_NAME
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/seer
-REDIS_URL=redis://redis:6379/0
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/seer
+REDIS_URL=redis://localhost:6379/0
 BACKEND_PORT=$BACKEND_PORT
 EOF
 
-# Copy secrets from main backend .env if it exists
-if [[ -f "$SEER_REPO_PATH/.env" ]]; then
-    echo "" >> "$BACKEND_WORKTREE/.env.thread"
-    echo "# Inherited from main .env" >> "$BACKEND_WORKTREE/.env.thread"
-    grep -E '^(OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|SENTRY_DSN)=' "$SEER_REPO_PATH/.env" >> "$BACKEND_WORKTREE/.env.thread" 2>/dev/null || true
-fi
-echo "✓ Backend .env.thread created"
+echo "✓ Backend .env created"
 echo ""
 
 # Create frontend .env
@@ -249,73 +252,16 @@ ENVEOF
     echo ""
 fi
 
-# Copy Claude Code configuration templates
-echo "Setting up Claude Code configuration..."
-
-# Frontend .claude config
-FRONTEND_CLAUDE_DIR="$FRONTEND_WORKTREE/.claude"
-FRONTEND_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/frontend"
-
-if [[ -d "$FRONTEND_CLAUDE_TEMPLATE" ]]; then
-    mkdir -p "$FRONTEND_CLAUDE_DIR"
-    cp -r "$FRONTEND_CLAUDE_TEMPLATE/"* "$FRONTEND_CLAUDE_DIR/"
-    echo "✓ Frontend Claude Code config copied"
+# Start backend + frontend processes
+echo "Starting services..."
+if ! "$SCRIPT_DIR/thread-start.sh" "$THREAD_ID"; then
+    echo "Error: Failed to start services" >&2
+    echo "Worktrees are ready but services need manual start" >&2
+    "$SCRIPT_DIR/port-allocator.sh" update-status "$THREAD_ID" "ready"
 fi
-
-# Backend .claude config
-BACKEND_CLAUDE_DIR="$BACKEND_WORKTREE/.claude"
-BACKEND_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/backend"
-
-if [[ -d "$BACKEND_CLAUDE_TEMPLATE" ]]; then
-    mkdir -p "$BACKEND_CLAUDE_DIR"
-    cp -r "$BACKEND_CLAUDE_TEMPLATE/"* "$BACKEND_CLAUDE_DIR/"
-    echo "✓ Backend Claude Code config copied"
-fi
-
-# Sales-CX .claude config (optional)
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    SALES_CX_CLAUDE_DIR="$THREAD_PARENT_DIR/sales-cx/.claude"
-    SALES_CX_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/sales-cx"
-
-    if [[ -d "$SALES_CX_CLAUDE_TEMPLATE" ]]; then
-        mkdir -p "$SALES_CX_CLAUDE_DIR"
-        cp -r "$SALES_CX_CLAUDE_TEMPLATE/"* "$SALES_CX_CLAUDE_DIR/"
-        echo "✓ Sales-CX Claude Code config copied"
-    fi
-fi
-
-# Seer-website .claude config (optional)
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
-    WEBSITE_CLAUDE_DIR="$WEBSITE_WORKTREE/.claude"
-    WEBSITE_CLAUDE_TEMPLATE="$REPO_ROOT/templates/claude/website"
-
-    if [[ -d "$WEBSITE_CLAUDE_TEMPLATE" ]]; then
-        mkdir -p "$WEBSITE_CLAUDE_DIR"
-        cp -r "$WEBSITE_CLAUDE_TEMPLATE/"* "$WEBSITE_CLAUDE_DIR/"
-        echo "✓ Seer-website Claude Code config copied"
-    fi
-fi
-
-echo ""
-
-# Generate devcontainer configuration
-echo "Generating devcontainer configuration..."
-if ! "$SCRIPT_DIR/devcontainer-init.sh" "$THREAD_PARENT_DIR" "$THREAD_ID" "$BACKEND_PORT" "$FRONTEND_PORT"; then
-    echo "Error: Failed to generate devcontainer configuration" >&2
-    cd "$SEER_REPO_PATH"
-    git worktree remove --force "$BACKEND_WORKTREE"
-    cd "$SEER_FRONTEND_PATH"
-    git worktree remove --force "$FRONTEND_WORKTREE"
-    "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-    rm -rf "$THREAD_PARENT_DIR"
-    exit 1
-fi
-echo ""
-
-# Update thread status
-"$SCRIPT_DIR/port-allocator.sh" update-status "$THREAD_ID" "ready"
 
 # Output success message
+echo ""
 echo "=========================================="
 echo "Thread $THREAD_ID initialized successfully!"
 echo "=========================================="
@@ -323,46 +269,9 @@ echo ""
 echo "Branch: $BRANCH_NAME"
 echo "Workspace: $THREAD_PARENT_DIR"
 echo ""
-echo "Structure:"
-echo "  $THREAD_PARENT_DIR/"
-echo "    ├── .devcontainer/    # Devcontainer config"
-echo "    ├── backend/          # Backend git worktree"
-echo "    ├── frontend/         # Frontend git worktree"
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    echo "    ├── sales-cx/         # Sales-CX git worktree"
-fi
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
-    echo "    ├── website/          # Seer-website git worktree"
-fi
-echo "    └── ..."
-echo ""
-echo "Services (after opening in VS Code):"
+echo "Services:"
 echo "  Backend API:  http://localhost:$BACKEND_PORT"
 echo "  Frontend Dev: http://localhost:$FRONTEND_PORT"
-echo "  Postgres:     postgres:5432 (internal only)"
-echo "  Redis:        redis:6379 (internal only)"
-echo ""
-echo "Next steps:"
-echo "  1. Open in VS Code:"
-echo "     code $THREAD_PARENT_DIR"
-echo ""
-echo "  2. Click 'Reopen in Container' when prompted"
-echo ""
-echo "  3. Inside devcontainer, start services:"
-echo "     cd /workspace/backend && uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload"
-echo "     cd /workspace/frontend && bun dev --port 5173"
-echo ""
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
-    if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-        echo "  4. Claude Code has full-stack context (backend + frontend + website + sales-cx docs)"
-    else
-        echo "  4. Claude Code has full-stack context (backend + frontend + website)"
-    fi
-elif [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    echo "  4. Claude Code has full-stack context (backend + frontend + sales-cx docs)"
-else
-    echo "  4. Claude Code has full-stack context (backend + frontend)"
-fi
 echo ""
 echo "When done:"
 echo "  git push origin $BRANCH_NAME"

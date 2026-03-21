@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Clean up thread resources (devcontainer, volumes, worktrees)
+# Clean up thread resources (processes, worktrees, branches)
 # Handles unified worktree structure with backend + frontend
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,52 +101,14 @@ echo ""
 echo "Cleaning up thread $THREAD_ID..."
 echo ""
 
-# Stop devcontainer if running
-DEVCONTAINER_COMPOSE="$THREAD_PARENT_DIR/.devcontainer/docker-compose.yml"
-if [[ -f "$DEVCONTAINER_COMPOSE" ]]; then
-    echo "Stopping devcontainer..."
-    cd "$THREAD_PARENT_DIR/.devcontainer"
-    if docker compose down -v 2>&1; then
-        echo "✓ Devcontainer stopped and removed"
-        sleep 0.5  # Brief wait for filesystem locks to release
-    else
-        echo "Warning: Failed to stop devcontainer, it may not be running" >&2
-    fi
-    cd "$REPO_ROOT"
-else
-    echo "Warning: Devcontainer compose file not found, skipping container cleanup" >&2
-fi
+# Stop running processes
+echo "Stopping processes..."
+"$SCRIPT_DIR/thread-stop.sh" "$THREAD_ID" 2>/dev/null || true
 
-echo ""
-
-# Remove Docker volumes
-echo "Removing Docker volumes..."
-VOLUMES=(
-    "seer-thread-${THREAD_ID}-postgres_data"
-    "seer-thread-${THREAD_ID}-redis_data"
-)
-
-for volume in "${VOLUMES[@]}"; do
-    if docker volume inspect "$volume" >/dev/null 2>&1; then
-        if docker volume rm "$volume" 2>&1; then
-            echo "✓ Removed volume: $volume"
-        else
-            echo "Warning: Failed to remove volume: $volume" >&2
-        fi
-    fi
-done
-
-echo ""
-
-# Remove Docker network
-NETWORK="seer-thread-${THREAD_ID}-network"
-if docker network inspect "$NETWORK" >/dev/null 2>&1; then
-    if docker network rm "$NETWORK" 2>&1; then
-        echo "✓ Removed network: $NETWORK"
-    else
-        echo "Warning: Failed to remove network: $NETWORK" >&2
-    fi
-fi
+# Remove log files
+LOG_DIR="$REPO_ROOT/worktrees/logs"
+rm -f "$LOG_DIR/thread-${THREAD_ID}-backend.log" "$LOG_DIR/thread-${THREAD_ID}-frontend.log"
+echo "✓ Log files removed"
 
 echo ""
 

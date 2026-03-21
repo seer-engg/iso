@@ -44,7 +44,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'iso_list_threads',
-        description: 'List all ISO threads with their status, ports, and container information',
+        description: 'List all ISO threads with their status, ports, and process information',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -53,7 +53,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'iso_cleanup_thread',
         description:
-          'Cleanup an ISO thread (stops containers, removes worktrees, deallocates ports)',
+          'Cleanup an ISO thread (stops processes, removes worktrees, deallocates ports)',
         inputSchema: {
           type: 'object',
           properties: {
@@ -68,7 +68,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'iso_get_thread_info',
         description:
-          'Get detailed information about a specific ISO thread including Docker container status',
+          'Get detailed information about a specific ISO thread including process status',
         inputSchema: {
           type: 'object',
           properties: {
