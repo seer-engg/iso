@@ -39,6 +39,9 @@ if [[ ! -f "$REGISTRY_FILE" ]]; then
     touch "$REGISTRY_FILE"
 fi
 
+# Clean up lock on exit (set once at script scope, not inside functions)
+trap "rmdir '$LOCKFILE' 2>/dev/null || true" EXIT
+
 # Check if a port is available
 check_port_available() {
     local port=$1
@@ -60,7 +63,6 @@ acquire_lock() {
             return 1
         fi
     done
-    trap "rmdir '$LOCKFILE' 2>/dev/null || true" EXIT
 }
 
 # Release lock
@@ -120,7 +122,7 @@ allocate_thread() {
     done
 
     # Calculate worktree path
-    local worktree_path="$WORKTREE_DIR/backend/thread-$next_id"
+    local worktree_path="$WORKTREE_DIR/thread-$next_id"
 
     # Add to registry
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

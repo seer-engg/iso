@@ -85,7 +85,7 @@ echo ""
 
 # Allocate thread ID and ports
 echo "Allocating thread resources..."
-ALLOCATION=$("$SCRIPT_DIR/port-allocator.sh" allocate "$FEATURE_NAME" "thread-X-$FEATURE_SLUG")
+ALLOCATION=$("$SCRIPT_DIR/port-allocator.sh" allocate "$FEATURE_NAME" "placeholder")
 
 if [[ $? -ne 0 ]]; then
     echo "Error: Failed to allocate thread" >&2
@@ -99,6 +99,10 @@ BRANCH_NAME="thread-$THREAD_ID-$FEATURE_SLUG"
 THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
 BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
 FRONTEND_WORKTREE="$THREAD_PARENT_DIR/frontend"
+
+# Fix the branch name in registry (allocator didn't know the thread ID yet)
+REGISTRY_FILE="$REPO_ROOT/worktrees/.thread-registry"
+sed -i "s|^${THREAD_ID}|placeholder|${THREAD_ID}|${BRANCH_NAME}|" "$REGISTRY_FILE" 2>/dev/null || true
 
 echo "✓ Thread $THREAD_ID allocated"
 echo "  Backend:  localhost:$BACKEND_PORT"

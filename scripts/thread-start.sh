@@ -54,10 +54,10 @@ cd "$FRONTEND_WORKTREE"
 npm install 2>&1 | tail -1
 echo "✓ Frontend dependencies installed"
 
-# Start backend
+# Start backend (nohup only, no setsid — safe for process tree kills)
 echo "Starting backend on port $backend_port..."
 cd "$BACKEND_WORKTREE"
-setsid nohup uv run uvicorn seer.api.main:app --host 0.0.0.0 --port "$backend_port" --reload \
+nohup uv run uvicorn seer.api.main:app --host 0.0.0.0 --port "$backend_port" --reload \
     > "$LOG_DIR/thread-${THREAD_ID}-backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "✓ Backend started (PID: $BACKEND_PID)"
@@ -65,7 +65,7 @@ echo "✓ Backend started (PID: $BACKEND_PID)"
 # Start frontend
 echo "Starting frontend on port $frontend_port..."
 cd "$FRONTEND_WORKTREE"
-setsid nohup npx vite --host 0.0.0.0 --port "$frontend_port" \
+nohup npx vite --host 0.0.0.0 --port "$frontend_port" \
     > "$LOG_DIR/thread-${THREAD_ID}-frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo "✓ Frontend started (PID: $FRONTEND_PID)"

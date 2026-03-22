@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Stop backend + frontend processes for an ISO thread without cleanup
+# Safe: kills only specific PIDs and their children, never process groups
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -17,20 +18,19 @@ THREAD_ID="$1"
 THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
 PID_FILE="$THREAD_PARENT_DIR/.pids"
 
-# Kill a process and all its children via process group
+# Kill a process and its children recursively (SIGTERM, no group kills)
 kill_tree() {
     local pid="$1"
     if ! kill -0 "$pid" 2>/dev/null; then
         return 0
     fi
-    # Try process group kill first
-    local pgid
-    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ') || true
-    if [[ -n "$pgid" ]] && [[ "$pgid" != "0" ]]; then
-        kill -- -"$pgid" 2>/dev/null || true
-    fi
-    # Fallback: kill children then parent
-    pkill -P "$pid" 2>/dev/null || true
+    # Kill children first
+    local children
+    children=$(pgrep -P "$pid" 2>/dev/null) || true
+    for child in $children; do
+        kill_tree "$child"
+    done
+    # Then kill the parent
     kill "$pid" 2>/dev/null || true
 }
 
@@ -47,32 +47,45 @@ if [[ -f "$PID_FILE" ]]; then
     IFS='|' read -r backend_pid frontend_pid < "$PID_FILE"
 
     for pid in $backend_pid $frontend_pid; do
-        kill_tree "$pid"
-        echo "✓ Killed process tree for PID $pid"
+        if [[ -n "$pid" ]]; then
+            kill_tree "$pid"
+            echo "✓ Killed process tree for PID $pid"
+        fi
     done
 
     rm -f "$PID_FILE"
 else
-    echo "No PID file found, will clean up by port..."
+    echo "No PID file found, will clean up by command match..."
 fi
 
-# Always verify ports are clear (catches orphans the PID kill missed)
-for port in $BACKEND_PORT $FRONTEND_PORT; do
-    if [[ -z "$port" ]]; then continue; fi
-    remaining=$(lsof -ti :"$port" 2>/dev/null || true)
+# Verify ports are clear — match on command string, NOT lsof (which catches VSCode proxies)
+if [[ -n "$BACKEND_PORT" ]]; then
+    remaining=$(pgrep -f "uvicorn.*port.*$BACKEND_PORT" 2>/dev/null || true)
     if [[ -n "$remaining" ]]; then
-        echo "⚠ Rogue process on port $port (PIDs: $remaining) — force killing"
-        echo "$remaining" | xargs kill -9 2>/dev/null || true
-        sleep 0.5
-        # Final check
-        still_there=$(lsof -ti :"$port" 2>/dev/null || true)
+        echo "⚠ Rogue uvicorn on port $BACKEND_PORT (PIDs: $remaining) — killing"
+        echo "$remaining" | xargs kill 2>/dev/null || true
+        sleep 1
+        still_there=$(pgrep -f "uvicorn.*port.*$BACKEND_PORT" 2>/dev/null || true)
         if [[ -n "$still_there" ]]; then
-            echo "✗ Failed to free port $port (PIDs: $still_there)" >&2
-        else
-            echo "✓ Port $port cleared"
+            echo "$still_there" | xargs kill -9 2>/dev/null || true
         fi
+        echo "✓ Port $BACKEND_PORT cleared"
     fi
-done
+fi
+
+if [[ -n "$FRONTEND_PORT" ]]; then
+    remaining=$(pgrep -f "vite.*port.*$FRONTEND_PORT" 2>/dev/null || true)
+    if [[ -n "$remaining" ]]; then
+        echo "⚠ Rogue vite on port $FRONTEND_PORT (PIDs: $remaining) — killing"
+        echo "$remaining" | xargs kill 2>/dev/null || true
+        sleep 1
+        still_there=$(pgrep -f "vite.*port.*$FRONTEND_PORT" 2>/dev/null || true)
+        if [[ -n "$still_there" ]]; then
+            echo "$still_there" | xargs kill -9 2>/dev/null || true
+        fi
+        echo "✓ Port $FRONTEND_PORT cleared"
+    fi
+fi
 
 # Update status
 "$SCRIPT_DIR/port-allocator.sh" update-status "$THREAD_ID" "stopped" 2>/dev/null || true

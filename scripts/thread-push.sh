@@ -40,6 +40,10 @@ rebase_and_push() {
     echo "=== $label ==="
     cd "$worktree"
 
+    # Use the actual git branch, not the registry (which may be stale)
+    local actual_branch
+    actual_branch=$(git rev-parse --abbrev-ref HEAD)
+
     # Check for uncommitted changes
     if ! git diff --quiet || ! git diff --cached --quiet; then
         echo "✗ $label has uncommitted changes — commit or stash first" >&2
@@ -52,13 +56,13 @@ rebase_and_push() {
     echo "Rebasing on origin/dev..."
     if ! git rebase origin/dev; then
         echo "✗ Rebase conflict in $label — resolve manually, then run:" >&2
-        echo "  cd $worktree && git rebase --continue && git push -u origin $branch" >&2
+        echo "  cd $worktree && git rebase --continue && git push -u origin $actual_branch" >&2
         git rebase --abort 2>/dev/null || true
         return 1
     fi
 
     echo "Pushing to origin..."
-    git push -u origin "$branch" --force-with-lease
+    git push -u origin "$actual_branch" --force-with-lease
 
     echo "✓ $label pushed (rebased on dev)"
     echo ""
@@ -72,4 +76,6 @@ if [[ "$TARGET" == "frontend" ]] || [[ "$TARGET" == "both" ]]; then
     rebase_and_push "$THREAD_PARENT_DIR/frontend" "Frontend"
 fi
 
-echo "✓ Thread $THREAD_ID pushed to origin/$branch"
+# Read actual branch from backend worktree (registry may be stale)
+ACTUAL_BRANCH=$(git -C "$THREAD_PARENT_DIR/backend" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$branch")
+echo "✓ Thread $THREAD_ID pushed to origin/$ACTUAL_BRANCH"
