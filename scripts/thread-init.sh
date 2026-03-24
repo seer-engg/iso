@@ -205,6 +205,9 @@ THREAD_BRANCH=$BRANCH_NAME
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/seer
 REDIS_URL=redis://valkey:6379/0
 BACKEND_PORT=$BACKEND_PORT
+DISABLE_USAGE_LIMITS=true
+FRONTEND_URL=http://localhost:$FRONTEND_PORT
+WEBHOOK_BASE_URL=http://localhost:$BACKEND_PORT
 EOF
 
 # Create .env.thread for docker compose port overrides + project isolation
