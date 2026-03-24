@@ -101,9 +101,22 @@ echo ""
 echo "Cleaning up thread $THREAD_ID..."
 echo ""
 
-# Stop running processes
-echo "Stopping processes..."
-"$SCRIPT_DIR/thread-stop.sh" "$THREAD_ID" 2>/dev/null || true
+# Stop and remove containers + volumes via docker compose
+echo "Stopping and removing containers..."
+BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
+if [[ -f "$BACKEND_WORKTREE/.env.thread" ]]; then
+    cd "$BACKEND_WORKTREE"
+    docker compose --env-file .env --env-file .env.thread down -v 2>/dev/null || true
+    echo "✓ Docker containers and volumes removed"
+else
+    # Legacy fallback
+    "$SCRIPT_DIR/thread-stop.sh" "$THREAD_ID" 2>/dev/null || true
+fi
+
+# Stop frontend systemd service
+systemctl --user stop "iso-frontend@${THREAD_ID}" 2>/dev/null || true
+systemctl --user reset-failed "iso-frontend@${THREAD_ID}" 2>/dev/null || true
+echo "✓ Frontend stopped"
 
 # Remove log files
 LOG_DIR="$REPO_ROOT/worktrees/logs"
@@ -264,8 +277,10 @@ cd "$REPO_ROOT"
 echo ""
 
 # Remove parent directory (includes .devcontainer and any remaining files)
+# Docker containers create root-owned __pycache__ files, so fix ownership first
 if [[ -d "$THREAD_PARENT_DIR" ]]; then
     echo "Removing thread parent directory..."
+    docker run --rm -v "$THREAD_PARENT_DIR:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true
     rm -rf "$THREAD_PARENT_DIR"
     echo "✓ Thread directory removed: $THREAD_PARENT_DIR"
 fi

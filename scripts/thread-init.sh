@@ -194,19 +194,28 @@ else
     touch "$BACKEND_WORKTREE/.env"
 fi
 
-# Append thread-specific overrides (localhost, not container hostnames)
+# Append thread-specific overrides
+# DATABASE_URL and REDIS_URL use container service names (resolved by docker compose networking)
 cat >> "$BACKEND_WORKTREE/.env" <<EOF
 
 # Thread $THREAD_ID backend overrides
 # Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 THREAD_ID=$THREAD_ID
 THREAD_BRANCH=$BRANCH_NAME
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/seer
-REDIS_URL=redis://localhost:6379/0
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/seer
+REDIS_URL=redis://valkey:6379/0
 BACKEND_PORT=$BACKEND_PORT
 EOF
 
-echo "✓ Backend .env created"
+# Create .env.thread for docker compose port overrides + project isolation
+cat > "$BACKEND_WORKTREE/.env.thread" <<EOF
+COMPOSE_PROJECT_NAME=seer-thread-$THREAD_ID
+POSTGRES_PORT=$((5432 + THREAD_ID))
+REDIS_PORT=$((6379 + THREAD_ID))
+API_PORT=$BACKEND_PORT
+EOF
+
+echo "✓ Backend .env + .env.thread created"
 echo ""
 
 # Create frontend .env
