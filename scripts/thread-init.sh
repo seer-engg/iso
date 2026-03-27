@@ -1,295 +1,101 @@
 #!/usr/bin/env bash
+# ISO Thread Init - creates isolated worktrees with allocated ports
 set -euo pipefail
 
-# Initialize a new seer thread with local process isolation
-# Creates unified worktree structure with backend + frontend as local processes
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ISO_DIR="$(dirname "$SCRIPT_DIR")"
+source "$ISO_DIR/config" 2>/dev/null || { echo "Run setup.sh first" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-
-# Load configuration
-if [[ ! -f "$REPO_ROOT/config" ]]; then
-    echo "Error: Config file not found. Run: cp config.example config" >&2
-    exit 1
-fi
-
-source "$REPO_ROOT/config"
-
-if [[ -z "${SEER_REPO_PATH:-}" ]]; then
-    echo "Error: SEER_REPO_PATH not set in config" >&2
-    exit 1
-fi
-
-if [[ ! -d "$SEER_REPO_PATH" ]]; then
-    echo "Error: SEER_REPO_PATH does not exist: $SEER_REPO_PATH" >&2
-    exit 1
-fi
-
-# Usage
-if [[ $# -lt 1 ]]; then
-    echo "Usage: thread-init.sh <feature-name> [base-branch]" >&2
-    echo "" >&2
-    echo "Examples:" >&2
-    echo "  thread-init.sh \"add-auth-feature\" dev" >&2
-    echo "  thread-init.sh \"fix-workflow-bug\" main" >&2
-    exit 1
-fi
-
-FEATURE_NAME="$1"
+FEATURE_NAME="${1:?Usage: thread-init.sh <feature-name> [base-branch]}"
 BASE_BRANCH="${2:-dev}"
 
-# Validate base branch exists in backend repo
-cd "$SEER_REPO_PATH"
-if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-    echo "Error: Base branch '$BASE_BRANCH' does not exist in backend repo" >&2
-    exit 1
-fi
+WORKTREES_DIR="$ISO_DIR/worktrees"
+PORTS_DIR="$ISO_DIR/ports"
+LOGS_DIR="$WORKTREES_DIR/logs"
+mkdir -p "$WORKTREES_DIR" "$PORTS_DIR" "$LOGS_DIR"
 
-# Validate frontend repo and base branch
-if [[ -z "${SEER_FRONTEND_PATH:-}" ]] || [[ ! -d "$SEER_FRONTEND_PATH" ]]; then
-    echo "Error: SEER_FRONTEND_PATH not set or does not exist: ${SEER_FRONTEND_PATH:-}" >&2
-    echo "ISO requires both backend and frontend repos" >&2
-    exit 1
-fi
+# Allocate thread ID (next available)
+THREAD_ID=1
+while [ -d "$WORKTREES_DIR/thread-$THREAD_ID" ] || [ -f "$PORTS_DIR/thread-$THREAD_ID" ]; do
+  THREAD_ID=$((THREAD_ID + 1))
+done
 
-cd "$SEER_FRONTEND_PATH"
-if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-    echo "Error: Base branch '$BASE_BRANCH' does not exist in frontend repo" >&2
-    exit 1
-fi
+# Allocate ports
+# port-allocator.sh is a CLI tool, not a sourceable library — skip it
+# Ports are computed inline below
+BACKEND_PORT=$((3000 + THREAD_ID))
+FRONTEND_PORT=$((4000 + THREAD_ID))
 
-# Validate sales-cx repo and base branch (optional)
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    cd "$SALES_CX_REPO_PATH"
-    if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-        echo "Error: Base branch '$BASE_BRANCH' does not exist in sales-cx repo" >&2
-        exit 1
-    fi
-fi
+# Save port allocation
+echo "BACKEND_PORT=$BACKEND_PORT" > "$PORTS_DIR/thread-$THREAD_ID"
+echo "FRONTEND_PORT=$FRONTEND_PORT" >> "$PORTS_DIR/thread-$THREAD_ID"
 
-# Validate seer-website repo and base branch (optional)
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
-    cd "$SEER_WEBSITE_PATH"
-    if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-        echo "Error: Base branch '$BASE_BRANCH' does not exist in seer-website repo" >&2
-        exit 1
-    fi
-fi
+THREAD_DIR="$WORKTREES_DIR/thread-$THREAD_ID"
+BRANCH_NAME="thread-${THREAD_ID}/${FEATURE_NAME}"
 
-# Sanitize feature name
-FEATURE_SLUG=$(echo "$FEATURE_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
-
-echo "Initializing thread for feature: $FEATURE_NAME"
-echo "Base branch: $BASE_BRANCH"
-echo ""
-
-# Allocate thread ID and ports
-echo "Allocating thread resources..."
-ALLOCATION=$("$SCRIPT_DIR/port-allocator.sh" allocate "$FEATURE_NAME" "placeholder")
-
-if [[ $? -ne 0 ]]; then
-    echo "Error: Failed to allocate thread" >&2
-    exit 1
-fi
-
-# Parse allocation result
-IFS='|' read -r THREAD_ID BACKEND_PORT FRONTEND_PORT OLD_WORKTREE_PATH <<< "$ALLOCATION"
-
-BRANCH_NAME="thread-$THREAD_ID-$FEATURE_SLUG"
-THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
-BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
-FRONTEND_WORKTREE="$THREAD_PARENT_DIR/frontend"
-
-# Fix the branch name in registry (allocator didn't know the thread ID yet)
-REGISTRY_FILE="$REPO_ROOT/worktrees/.thread-registry"
-sed -i "s|^${THREAD_ID}|placeholder|${THREAD_ID}|${BRANCH_NAME}|" "$REGISTRY_FILE" 2>/dev/null || true
-
-echo "✓ Thread $THREAD_ID allocated"
-echo "  Backend:  localhost:$BACKEND_PORT"
-echo "  Frontend: localhost:$FRONTEND_PORT"
-echo ""
-
-# Create parent directory
-mkdir -p "$THREAD_PARENT_DIR"
-
-# Create backend git worktree
+# Create backend worktree
 echo "Creating backend worktree..."
 cd "$SEER_REPO_PATH"
-if ! git worktree add "$BACKEND_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
-    echo "Error: Failed to create backend worktree" >&2
-    "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-    rm -rf "$THREAD_PARENT_DIR"
-    exit 1
-fi
-echo "✓ Backend worktree: $BACKEND_WORKTREE"
-echo "✓ Branch: $BRANCH_NAME"
-echo ""
+git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+git worktree add "$THREAD_DIR/backend" -b "$BRANCH_NAME" "origin/$BASE_BRANCH"
 
-# Create frontend git worktree
+# Install post-commit hook for backend (auto-push on commit)
+BACKEND_GITDIR=$(git -C "$THREAD_DIR/backend" rev-parse --git-dir)
+mkdir -p "$BACKEND_GITDIR/hooks"
+cat > "$BACKEND_GITDIR/hooks/post-commit" << 'HOOK'
+#!/usr/bin/env bash
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+[[ -n "$branch" ]] && git push origin "$branch" 2>/dev/null &
+HOOK
+chmod +x "$BACKEND_GITDIR/hooks/post-commit"
+
+# Push initial branch to origin so tracking exists
+cd "$THREAD_DIR/backend" && git push -u origin "$BRANCH_NAME" 2>/dev/null || true
+
+# Create frontend worktree
 echo "Creating frontend worktree..."
 cd "$SEER_FRONTEND_PATH"
-if ! git worktree add "$FRONTEND_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
-    echo "Error: Failed to create frontend worktree" >&2
-    cd "$SEER_REPO_PATH"
-    git worktree remove --force "$BACKEND_WORKTREE"
-    "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-    rm -rf "$THREAD_PARENT_DIR"
-    exit 1
-fi
-echo "✓ Frontend worktree: $FRONTEND_WORKTREE"
-echo "✓ Branch: $BRANCH_NAME"
+git worktree add "$THREAD_DIR/frontend" -b "$BRANCH_NAME" "origin/$BASE_BRANCH"
+
+# Install post-commit hook for frontend (auto-push on commit)
+FRONTEND_GITDIR=$(git -C "$THREAD_DIR/frontend" rev-parse --git-dir)
+mkdir -p "$FRONTEND_GITDIR/hooks"
+cat > "$FRONTEND_GITDIR/hooks/post-commit" << 'HOOK'
+#!/usr/bin/env bash
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+[[ -n "$branch" ]] && git push origin "$branch" 2>/dev/null &
+HOOK
+chmod +x "$FRONTEND_GITDIR/hooks/post-commit"
+
+# Push initial branch to origin so tracking exists
+cd "$THREAD_DIR/frontend" && git push -u origin "$BRANCH_NAME" 2>/dev/null || true
+
+# Install backend deps
+echo "Installing backend dependencies..."
+cd "$THREAD_DIR/backend"
+uv sync 2>&1 | tail -1 || true
+
+# Install frontend deps
+echo "Installing frontend dependencies..."
+cd "$THREAD_DIR/frontend"
+npm install 2>&1 | tail -1 || true
+
+# Start backend
+echo "Starting backend on port $BACKEND_PORT..."
+cd "$THREAD_DIR/backend"
+PORT=$BACKEND_PORT nohup uv run uvicorn src.seer.api.main:app --host 0.0.0.0 --port $BACKEND_PORT > "$LOGS_DIR/thread-${THREAD_ID}-backend.log" 2>&1 &
+echo $! > "$PORTS_DIR/thread-${THREAD_ID}-backend.pid"
+
+# Start frontend
+echo "Starting frontend on port $FRONTEND_PORT..."
+cd "$THREAD_DIR/frontend"
+PORT=$FRONTEND_PORT nohup npm run dev -- --port $FRONTEND_PORT > "$LOGS_DIR/thread-${THREAD_ID}-frontend.log" 2>&1 &
+echo $! > "$PORTS_DIR/thread-${THREAD_ID}-frontend.pid"
+
 echo ""
-
-# Create sales-cx git worktree (optional)
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    SALES_CX_WORKTREE="$THREAD_PARENT_DIR/sales-cx"
-    echo "Creating sales-cx worktree..."
-    cd "$SALES_CX_REPO_PATH"
-    if ! git worktree add "$SALES_CX_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
-        echo "Error: Failed to create sales-cx worktree" >&2
-        cd "$SEER_REPO_PATH"
-        git worktree remove --force "$BACKEND_WORKTREE"
-        cd "$SEER_FRONTEND_PATH"
-        git worktree remove --force "$FRONTEND_WORKTREE"
-        "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-        rm -rf "$THREAD_PARENT_DIR"
-        exit 1
-    fi
-    echo "✓ Sales-CX worktree: $SALES_CX_WORKTREE"
-    echo "✓ Branch: $BRANCH_NAME"
-    echo ""
-fi
-
-# Create seer-website git worktree (optional)
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
-    WEBSITE_WORKTREE="$THREAD_PARENT_DIR/website"
-    echo "Creating seer-website worktree..."
-    cd "$SEER_WEBSITE_PATH"
-    if ! git worktree add "$WEBSITE_WORKTREE" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>&1; then
-        echo "Error: Failed to create seer-website worktree" >&2
-        cd "$SEER_REPO_PATH"
-        git worktree remove --force "$BACKEND_WORKTREE"
-        cd "$SEER_FRONTEND_PATH"
-        git worktree remove --force "$FRONTEND_WORKTREE"
-        if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]] && [[ -d "$SALES_CX_WORKTREE" ]]; then
-            cd "$SALES_CX_REPO_PATH"
-            git worktree remove --force "$SALES_CX_WORKTREE"
-        fi
-        "$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-        rm -rf "$THREAD_PARENT_DIR"
-        exit 1
-    fi
-    echo "✓ Seer-website worktree: $WEBSITE_WORKTREE"
-    echo "✓ Branch: $BRANCH_NAME"
-    echo ""
-fi
-
-# Create backend .env
-echo "Creating backend .env..."
-
-# Start with main .env if it exists
-if [[ -f "$SEER_REPO_PATH/.env" ]]; then
-    cp "$SEER_REPO_PATH/.env" "$BACKEND_WORKTREE/.env"
-else
-    touch "$BACKEND_WORKTREE/.env"
-fi
-
-# Append thread-specific overrides
-# DATABASE_URL and REDIS_URL use container service names (resolved by docker compose networking)
-cat >> "$BACKEND_WORKTREE/.env" <<EOF
-
-# Thread $THREAD_ID backend overrides
-# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-THREAD_ID=$THREAD_ID
-THREAD_BRANCH=$BRANCH_NAME
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/seer
-REDIS_URL=redis://valkey:6379/0
-BACKEND_PORT=$BACKEND_PORT
-DISABLE_USAGE_LIMITS=true
-FRONTEND_URL=http://localhost:$FRONTEND_PORT
-WEBHOOK_BASE_URL=http://localhost:$BACKEND_PORT
-EOF
-
-# Create .env.thread for docker compose port overrides + project isolation
-cat > "$BACKEND_WORKTREE/.env.thread" <<EOF
-COMPOSE_PROJECT_NAME=seer-thread-$THREAD_ID
-POSTGRES_PORT=$((5432 + THREAD_ID))
-REDIS_PORT=$((6379 + THREAD_ID))
-API_PORT=$BACKEND_PORT
-EOF
-
-echo "✓ Backend .env + .env.thread created"
-echo ""
-
-# Create frontend .env
-echo "Creating frontend .env..."
-# Copy from main frontend .env if it exists
-if [[ -f "$SEER_FRONTEND_PATH/.env" ]]; then
-    cp "$SEER_FRONTEND_PATH/.env" "$FRONTEND_WORKTREE/.env"
-else
-    touch "$FRONTEND_WORKTREE/.env"
-fi
-
-# Append thread-specific overrides
-cat >> "$FRONTEND_WORKTREE/.env" <<ENVEOF
-
-# Thread $THREAD_ID frontend overrides
-# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-THREAD_ID=$THREAD_ID
-VITE_DEV_PORT=$FRONTEND_PORT
-VITE_BACKEND_API_URL=http://localhost:$BACKEND_PORT
-ENVEOF
-
-echo "✓ Frontend .env created"
-echo ""
-
-# Create seer-website .env (optional)
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
-    echo "Creating seer-website .env..."
-
-    # Copy from main website .env if it exists
-    if [[ -f "$SEER_WEBSITE_PATH/.env" ]]; then
-        cp "$SEER_WEBSITE_PATH/.env" "$WEBSITE_WORKTREE/.env"
-    elif [[ -f "$SEER_WEBSITE_PATH/env.example" ]]; then
-        cp "$SEER_WEBSITE_PATH/env.example" "$WEBSITE_WORKTREE/.env"
-    else
-        touch "$WEBSITE_WORKTREE/.env"
-    fi
-
-    # Append thread-specific overrides
-    cat >> "$WEBSITE_WORKTREE/.env" <<ENVEOF
-
-# Thread $THREAD_ID website overrides
-# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-THREAD_ID=$THREAD_ID
-ENVEOF
-
-    echo "✓ Seer-website .env created"
-    echo ""
-fi
-
-# Start backend + frontend processes
-echo "Starting services..."
-if ! "$SCRIPT_DIR/thread-start.sh" "$THREAD_ID"; then
-    echo "Error: Failed to start services" >&2
-    echo "Worktrees are ready but services need manual start" >&2
-    "$SCRIPT_DIR/port-allocator.sh" update-status "$THREAD_ID" "ready"
-fi
-
-# Output success message
-echo ""
-echo "=========================================="
-echo "Thread $THREAD_ID initialized successfully!"
-echo "=========================================="
-echo ""
-echo "Branch: $BRANCH_NAME"
-echo "Workspace: $THREAD_PARENT_DIR"
-echo ""
-echo "Services:"
-echo "  Backend API:  http://localhost:$BACKEND_PORT"
-echo "  Frontend Dev: http://localhost:$FRONTEND_PORT"
-echo ""
-echo "When done:"
-echo "  git push origin $BRANCH_NAME"
-echo "  thread-cleanup.sh $THREAD_ID"
-echo "=========================================="
+echo "✓ Thread $THREAD_ID allocated"
+echo "  Branch:   $BRANCH_NAME"
+echo "  Worktree: $THREAD_DIR"
+echo "  Backend:  localhost:$BACKEND_PORT"
+echo "  Frontend: localhost:$FRONTEND_PORT"
+echo "  Logs:     $LOGS_DIR/thread-${THREAD_ID}-*.log"

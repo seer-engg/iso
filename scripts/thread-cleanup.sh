@@ -1,301 +1,104 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Clean up thread resources (processes, worktrees, branches)
-# Handles unified worktree structure with backend + frontend
+# ISO Thread Cleanup — safe cleanup with commit protection
+# Refuses to delete worktrees with unpushed commits unless they can be pushed/bundled.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+ISO_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Load configuration
-if [[ ! -f "$REPO_ROOT/config" ]]; then
-    echo "Error: Config file not found. Run: cp config.example config" >&2
-    exit 1
-fi
+source "$ISO_DIR/config"
+source "$SCRIPT_DIR/commit-guard.sh"
 
-source "$REPO_ROOT/config"
-
-if [[ -z "${SEER_REPO_PATH:-}" ]]; then
-    echo "Error: SEER_REPO_PATH not set in config" >&2
-    exit 1
-fi
-
-if [[ ! -d "$SEER_REPO_PATH" ]]; then
-    echo "Error: SEER_REPO_PATH does not exist: $SEER_REPO_PATH" >&2
-    exit 1
-fi
-
-# Usage
 if [[ $# -lt 1 ]]; then
     echo "Usage: thread-cleanup.sh <thread-id> [--force]" >&2
-    echo "" >&2
-    echo "Example: thread-cleanup.sh 1" >&2
-    echo "  --force: Skip confirmation prompt" >&2
     exit 1
 fi
 
 THREAD_ID="$1"
-FORCE_CLEANUP=false
+FORCE="${2:-}"
+THREAD_DIR="$ISO_DIR/worktrees/thread-$THREAD_ID"
+PORTS_FILE="$ISO_DIR/ports/thread-$THREAD_ID"
 
-# Check for --force flag
-shift
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --force|-f)
-            FORCE_CLEANUP=true
-            shift
-            ;;
-        *)
-            echo "Error: Unknown option: $1" >&2
-            exit 1
-            ;;
-    esac
+if [[ ! -d "$THREAD_DIR" ]]; then
+    echo "Error: Thread $THREAD_ID not found at $THREAD_DIR" >&2
+    exit 1
+fi
+
+# Read branch name from worktree
+BRANCH_NAME=""
+for repo in backend frontend; do
+    if [[ -d "$THREAD_DIR/$repo" ]]; then
+        BRANCH_NAME=$(git -C "$THREAD_DIR/$repo" symbolic-ref --short HEAD 2>/dev/null || true)
+        [[ -n "$BRANCH_NAME" ]] && break
+    fi
 done
 
-# Validate thread ID
-if ! [[ "$THREAD_ID" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid thread ID: $THREAD_ID" >&2
-    exit 1
-fi
+BASE_BRANCH="dev"
+BLOCKED=false
 
-# Get thread info
-THREAD_INFO=$("$SCRIPT_DIR/port-allocator.sh" get-info "$THREAD_ID" 2>/dev/null || echo "")
+echo "=== Cleanup thread $THREAD_ID (branch: ${BRANCH_NAME:-unknown}) ==="
 
-if [[ -z "$THREAD_INFO" ]]; then
-    echo "Error: Thread $THREAD_ID not found in registry" >&2
-    exit 1
-fi
+# Safety checks for each worktree
+for repo in backend frontend; do
+    worktree="$THREAD_DIR/$repo"
+    [[ -d "$worktree" ]] || continue
 
-# Parse thread info
-IFS='|' read -r tid branch backend_port frontend_port wt_path created status <<< "$THREAD_INFO"
+    echo "Checking $repo..."
+    unpushed=$(check_unpushed_commits "$worktree" "$BRANCH_NAME")
 
-# Determine actual worktree path (new unified structure)
-THREAD_PARENT_DIR="$REPO_ROOT/worktrees/thread-$THREAD_ID"
-BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
-FRONTEND_WORKTREE="$THREAD_PARENT_DIR/frontend"
-SALES_CX_WORKTREE="$THREAD_PARENT_DIR/sales-cx"
-WEBSITE_WORKTREE="$THREAD_PARENT_DIR/website"
+    if [[ "$unpushed" -gt 0 ]]; then
+        echo "  $unpushed unpushed commit(s) in $repo"
+        if ! push_or_backup "$worktree" "$BRANCH_NAME"; then
+            BLOCKED=true
+            echo "  BLOCKED: Cannot push $repo commits" >&2
+        fi
+    else
+        echo "  All commits pushed"
+    fi
 
-# Display thread info
-echo "Thread $THREAD_ID details:"
-echo "  Branch: $branch"
-echo "  Workspace: $THREAD_PARENT_DIR"
-echo "  Backend: localhost:$backend_port"
-echo "  Frontend: localhost:$frontend_port"
-echo "  Status: $status"
-echo "  Created: $created"
-echo ""
+    # Always create bundle as cheap insurance (may fail on empty diff — that's fine)
+    create_bundle "$worktree" "$BRANCH_NAME" "$BASE_BRANCH" "$THREAD_ID" || true
+done
 
-# Confirm cleanup
-if [[ "$FORCE_CLEANUP" != "true" ]]; then
-    read -p "Are you sure you want to cleanup thread $THREAD_ID? (y/N): " -n 1 -r
+if [[ "$BLOCKED" == true ]]; then
     echo ""
+    echo "ABORT: Unpushed commits could not be pushed. Fix network/auth and retry." >&2
+    echo "Bundles were saved to $BACKUP_DIR/ as partial backup." >&2
+    exit 1
+fi
 
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Cleanup cancelled"
-        exit 0
+# Stop services
+echo "Stopping services..."
+"$SCRIPT_DIR/thread-stop.sh" "$THREAD_ID" 2>/dev/null || true
+
+# Remove worktrees
+for repo in backend frontend; do
+    worktree="$THREAD_DIR/$repo"
+    [[ -d "$worktree" ]] || continue
+
+    PARENT_REPO="$SEER_REPO_PATH"
+    [[ "$repo" == "frontend" ]] && PARENT_REPO="$SEER_FRONTEND_PATH"
+
+    git -C "$PARENT_REPO" worktree remove --force "$worktree" 2>/dev/null || rm -rf "$worktree"
+    echo "  Removed $repo worktree"
+
+    # Delete local branch only (NOT remote)
+    if [[ -n "$BRANCH_NAME" ]]; then
+        git -C "$PARENT_REPO" branch -D "$BRANCH_NAME" 2>/dev/null || true
     fi
-fi
+done
 
-echo ""
-echo "Cleaning up thread $THREAD_ID..."
-echo ""
+# Cleanup thread directory and port allocation
+rm -rf "$THREAD_DIR"
+rm -f "$PORTS_FILE"
+rm -f "$ISO_DIR/ports/thread-${THREAD_ID}-backend.pid"
+rm -f "$ISO_DIR/ports/thread-${THREAD_ID}-frontend.pid"
 
-# Stop and remove containers + volumes via docker compose
-echo "Stopping and removing containers..."
-BACKEND_WORKTREE="$THREAD_PARENT_DIR/backend"
-if [[ -f "$BACKEND_WORKTREE/.env.thread" ]]; then
-    cd "$BACKEND_WORKTREE"
-    docker compose --env-file .env --env-file .env.thread down -v 2>/dev/null || true
-    echo "✓ Docker containers and volumes removed"
-else
-    # Legacy fallback
-    "$SCRIPT_DIR/thread-stop.sh" "$THREAD_ID" 2>/dev/null || true
-fi
-
-# Stop frontend systemd service
+# Stop systemd service if exists
 systemctl --user stop "iso-frontend@${THREAD_ID}" 2>/dev/null || true
-systemctl --user reset-failed "iso-frontend@${THREAD_ID}" 2>/dev/null || true
-echo "✓ Frontend stopped"
-
-# Remove log files
-LOG_DIR="$REPO_ROOT/worktrees/logs"
-rm -f "$LOG_DIR/thread-${THREAD_ID}-backend.log" "$LOG_DIR/thread-${THREAD_ID}-frontend.log"
-echo "✓ Log files removed"
 
 echo ""
-
-# Remove backend worktree
-if [[ -d "$BACKEND_WORKTREE" ]]; then
-    echo "Removing backend worktree..."
-    cd "$SEER_REPO_PATH"
-
-    # Force remove worktree (ignore modified/untracked files)
-    if git worktree remove --force "$BACKEND_WORKTREE" 2>&1; then
-        echo "✓ Backend worktree removed"
-    else
-        # Fallback: direct filesystem removal + prune
-        rm -rf "$BACKEND_WORKTREE"
-        git worktree prune 2>/dev/null || true
-        echo "✓ Backend worktree removed (fallback)"
-    fi
-fi
-
-echo ""
-
-# Remove frontend worktree
-if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]] && [[ -d "$FRONTEND_WORKTREE" ]]; then
-    echo "Removing frontend worktree..."
-    cd "$SEER_FRONTEND_PATH"
-
-    # Force remove worktree (ignore modified/untracked files)
-    if git worktree remove --force "$FRONTEND_WORKTREE" 2>&1; then
-        echo "✓ Frontend worktree removed"
-    else
-        # Fallback: direct filesystem removal + prune
-        rm -rf "$FRONTEND_WORKTREE"
-        git worktree prune 2>/dev/null || true
-        echo "✓ Frontend worktree removed (fallback)"
-    fi
-    cd "$REPO_ROOT"
-fi
-
-echo ""
-
-# Remove sales-cx worktree (optional)
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]] && [[ -d "$SALES_CX_WORKTREE" ]]; then
-    echo "Removing sales-cx worktree..."
-    cd "$SALES_CX_REPO_PATH"
-
-    # Force remove worktree (ignore modified/untracked files)
-    if git worktree remove --force "$SALES_CX_WORKTREE" 2>&1; then
-        echo "✓ Sales-CX worktree removed"
-    else
-        # Fallback: direct filesystem removal + prune
-        rm -rf "$SALES_CX_WORKTREE"
-        git worktree prune 2>/dev/null || true
-        echo "✓ Sales-CX worktree removed (fallback)"
-    fi
-    cd "$REPO_ROOT"
-fi
-
-echo ""
-
-# Remove seer-website worktree (optional)
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]] && [[ -d "$WEBSITE_WORKTREE" ]]; then
-    echo "Removing seer-website worktree..."
-    cd "$SEER_WEBSITE_PATH"
-
-    # Force remove worktree (ignore modified/untracked files)
-    if git worktree remove --force "$WEBSITE_WORKTREE" 2>&1; then
-        echo "✓ Seer-website worktree removed"
-    else
-        # Fallback: direct filesystem removal + prune
-        rm -rf "$WEBSITE_WORKTREE"
-        git worktree prune 2>/dev/null || true
-        echo "✓ Seer-website worktree removed (fallback)"
-    fi
-    cd "$REPO_ROOT"
-fi
-
-echo ""
-
-# Delete branches from all repos
-echo "Deleting branch '$branch' from all repos..."
-
-# Track deletion status
-BRANCH_DELETED=false
-
-# Delete from backend repo
-if [[ -d "$SEER_REPO_PATH" ]]; then
-    cd "$SEER_REPO_PATH"
-    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-        if git branch -D "$branch" 2>&1; then
-            echo "✓ Branch deleted from backend: $branch"
-            BRANCH_DELETED=true
-        else
-            echo "Warning: Failed to delete branch from backend" >&2
-        fi
-    fi
-fi
-
-# Delete from frontend repo
-if [[ -n "${SEER_FRONTEND_PATH:-}" ]] && [[ -d "$SEER_FRONTEND_PATH" ]]; then
-    cd "$SEER_FRONTEND_PATH"
-    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-        if git branch -D "$branch" 2>&1; then
-            echo "✓ Branch deleted from frontend: $branch"
-        else
-            echo "Warning: Failed to delete branch from frontend" >&2
-        fi
-    fi
-fi
-
-# Delete from sales-cx repo (optional)
-if [[ -n "${SALES_CX_REPO_PATH:-}" ]] && [[ -d "$SALES_CX_REPO_PATH" ]]; then
-    cd "$SALES_CX_REPO_PATH"
-    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-        if git branch -D "$branch" 2>&1; then
-            echo "✓ Branch deleted from sales-cx: $branch"
-        else
-            echo "Warning: Failed to delete branch from sales-cx" >&2
-        fi
-    fi
-fi
-
-# Delete from seer-website repo (optional)
-if [[ -n "${SEER_WEBSITE_PATH:-}" ]] && [[ -d "$SEER_WEBSITE_PATH" ]]; then
-    cd "$SEER_WEBSITE_PATH"
-    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-        if git branch -D "$branch" 2>&1; then
-            echo "✓ Branch deleted from seer-website: $branch"
-        else
-            echo "Warning: Failed to delete branch from seer-website" >&2
-        fi
-    fi
-fi
-
-cd "$REPO_ROOT"
-
-echo ""
-
-# Delete remote branch if it exists
-echo "Checking for remote branch..."
-cd "$SEER_REPO_PATH"
-if git ls-remote --heads origin "$branch" | grep -q "$branch"; then
-    echo "Deleting remote branch: $branch"
-    if git push origin --delete "$branch" 2>&1; then
-        echo "✓ Remote branch deleted: $branch"
-    else
-        echo "Warning: Failed to delete remote branch (may not exist or no permission)" >&2
-    fi
-else
-    echo "Remote branch does not exist, skipping"
-fi
-cd "$REPO_ROOT"
-
-echo ""
-
-# Remove parent directory (includes .devcontainer and any remaining files)
-# Docker containers create root-owned __pycache__ files, so fix ownership first
-if [[ -d "$THREAD_PARENT_DIR" ]]; then
-    echo "Removing thread parent directory..."
-    docker run --rm -v "$THREAD_PARENT_DIR:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true
-    rm -rf "$THREAD_PARENT_DIR"
-    echo "✓ Thread directory removed: $THREAD_PARENT_DIR"
-fi
-
-echo ""
-
-# Remove from registry
-echo "Updating registry..."
-"$SCRIPT_DIR/port-allocator.sh" remove "$THREAD_ID"
-echo "✓ Thread removed from registry"
-
-echo ""
-echo "=========================================="
-echo "Thread $THREAD_ID cleanup complete!"
-echo "=========================================="
-echo ""
-echo "All thread resources and branches have been deleted."
-echo "=========================================="
+echo "✓ Thread $THREAD_ID cleaned up"
+echo "  Remote branch '$BRANCH_NAME' preserved (use thread-archive.sh to delete)"
+echo "  Bundles saved in $BACKUP_DIR/"
